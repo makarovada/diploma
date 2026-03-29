@@ -1,17 +1,21 @@
 import dagster as dg
-from sqlalchemy import text
 
 from datanorma.resources.database import PostgresResource
+from datanorma.warehouse.load import count_canonical_sales, load_canonical_sales_to_postgres
 
 
 @dg.asset(
     group_name="warehouse",
-    description="Загрузка в warehouse (этап 1–2: проверка БД; далее INSERT/merge витрины).",
+    description="Загрузка витрины canonical_sales в PostgreSQL (UPSERT по source_system + source_record_id).",
 )
 def warehouse_sales(normalized_orders: dict, postgres: PostgresResource) -> dict:
-    with postgres.get_engine().connect() as conn:
-        conn.execute(text("SELECT 1"))
+    rows = normalized_orders.get("rows") or []
+    engine = postgres.get_engine()
+    load_info = load_canonical_sales_to_postgres(engine, rows)
+    total = count_canonical_sales(engine)
     return {
         "status": "ok",
-        "upstream_keys": list(normalized_orders.keys()),
+        "canonical_schema": normalized_orders.get("canonical_schema"),
+        **load_info,
+        "table_rowcount": total,
     }

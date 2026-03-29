@@ -21,6 +21,15 @@ fields:
   amount:
     type: number
     description: Сумма в валюте currency_code (до пересчёта в RUB на этапе витрины).
+  amount_rub:
+    type: number
+    nullable: true
+    description: Сумма в рублях по курсу ЦБ РФ на дату cbr_rate_date (после enrich).
+  cbr_rate_date:
+    type: string
+    format: date
+    nullable: true
+    description: Дата курса ЦБ, использованная для пересчёта.
   currency_code:
     type: string
     description: ISO-код валюты, например RUB.
@@ -40,3 +49,11 @@ fields:
     type: string
     nullable: true
     description: Статус в источнике (если применимо).
+  line_unit_normalized:
+    type: string
+    nullable: true
+    description: Нормализованная ед. изм. (если задана в источнике как line_unit_raw).
+  line_unit_raw:
+    type: string
+    nullable: true
+    description: Сырая ед. изм. из источника (опционально, через маппинг).

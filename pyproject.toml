@@ -15,13 +15,14 @@ dependencies = [
     "gspread>=6.0.0",
     "google-auth>=2.0.0",
     "pyyaml>=6.0",
+    "rapidfuzz>=3.0.0",
 ]
-
-[tool.setuptools.package-data]
-datanorma = ["schemas/*.yaml"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8.0"]
+
+[tool.setuptools.package-data]
+datanorma = ["schemas/*.yaml"]
 
 [build-system]
 requires = ["setuptools>=68"]

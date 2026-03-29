@@ -4,10 +4,15 @@
 version: 1
 canonical: canonical_sales_v1
 
+# Глобальный порог fuzzy для column_map (0 = выкл.). Переопределяется в источнике.
+options:
+  fuzzy_column_threshold: 0
+
 sources:
   ozon:
     handler: ozon_fbs_postings
   "1c":
+    fuzzy_column_threshold: 85
     handler: column_map
     fields:
       ДатаДокумента: event_datetime

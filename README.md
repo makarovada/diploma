@@ -50,6 +50,25 @@
 - Соответствие колонок ваших выгрузок этим полям: `datanorma/schemas/source_mappings.yaml`. Для другой структуры CSV/листа скопируйте файл, измените `fields` и задайте `DATANORMA_SOURCE_MAPPINGS_PATH`.
 - Asset `normalized_orders` строит список строк в этой канонической форме и выполняет простую дедупликацию по паре `(source_system, source_record_id)`.
 
+## Этап 3: нормализация (даты, ЦБ, fuzzy, единицы)
+
+- **Даты:** поле `event_datetime` приводится к ISO с часовым поясом **Europe/Moscow** (см. `datanorma/normalization/dates_msk.py`).
+- **Валюта → RUB:** для каждой строки берётся дата события (или сегодня по MSK), запрашивается дневной XML ЦБ РФ (`cbr_rates.py`, кэш `lru_cache` по дате). Поля **`amount_rub`**, **`cbr_rate_date`**. Нет сети или валюты в справочнике — `amount_rub` может быть `None`.
+- **Fuzzy маппинг колонок:** RapidFuzz, порог задаётся в `source_mappings.yaml` (`fuzzy_column_threshold` в `options` или у конкретного источника; у sample для **1С** включено 85).
+- **Единицы:** справочник-алиасы в `units.py`; в строке появляется `line_unit_normalized`, если задан `line_unit_raw` (при необходимости добавьте поле в YAML маппинга).
+
+Тесты: `pytest tests/ -q` (нужен `pip install -e ".[dev]"`).
+
+## Этап 4: warehouse (PostgreSQL)
+
+- Asset **`warehouse_sales`** создаёт таблицу **`canonical_sales`** (имя можно переопределить: `DATANORMA_WAREHOUSE_TABLE`) и выполняет **UPSERT** по ключу `(source_system, source_record_id)` из `normalized_orders["rows"]`.
+- Строки без `source_record_id` в warehouse **не пишутся** (нет стабильного ключа).
+- Проверка для аналитика после materialize:
+
+  ```sql
+  SELECT * FROM canonical_sales ORDER BY loaded_at DESC LIMIT 20;
+  ```
+
 Переопределение URL БД: переменная окружения `DATABASE_URL` (см. `.env.example`).
 
 ### Если падает `warehouse_sales` (PostgreSQL)

@@ -1,4 +1,4 @@
-"""Сведение разных источников к канонической модели (конфигурируемый column_map + стратегии)."""
+"""Сведение разных источников к канонической модели (YAML + fuzzy + обогащение ЦБ/дат)."""
 
 from __future__ import annotations
 
@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+
+from datanorma.normalization.enrich import enrich_canonical_rows
 
 _PACKAGE_DIR = Path(__file__).resolve().parent.parent
 _DEFAULT_MAPPINGS = _PACKAGE_DIR / "schemas" / "source_mappings.yaml"
@@ -57,10 +59,39 @@ def _coerce_amount(value: Any) -> float | None:
         return None
 
 
+def _lookup_row_value(
+    row: dict[str, Any],
+    configured_raw: str,
+    *,
+    fuzzy_threshold: int,
+) -> Any:
+    if configured_raw in row:
+        return row[configured_raw]
+    if fuzzy_threshold <= 0:
+        return None
+    from rapidfuzz import fuzz
+
+    keys = [str(k) for k in row if k is not None]
+    if not keys:
+        return None
+    cr = configured_raw.lower()
+    best_k: str | None = None
+    best_s = -1
+    for k in keys:
+        s = fuzz.ratio(cr, k.lower())
+        if s > best_s:
+            best_s = s
+            best_k = k
+    if best_k is not None and best_s >= fuzzy_threshold:
+        return row.get(best_k)
+    return None
+
+
 def _map_tabular_row(
     row: dict[str, Any],
     field_map: dict[str, str],
     source_system: str,
+    fuzzy_threshold: int = 0,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "source_system": source_system,
@@ -74,13 +105,15 @@ def _map_tabular_row(
         "status": None,
     }
     for raw_key, canon_key in field_map.items():
-        if raw_key not in row:
+        val = _lookup_row_value(row, raw_key, fuzzy_threshold=fuzzy_threshold)
+        if val is None:
             continue
-        val = row[raw_key]
         if canon_key == "event_datetime":
             out["event_datetime"] = _parse_datetime(val)
         elif canon_key == "amount":
             out["amount"] = _coerce_amount(val)
+        elif canon_key == "currency_code":
+            out["currency_code"] = str(val).strip().upper() if val != "" else None
         else:
             out[canon_key] = val if val != "" else None
     return out
@@ -115,13 +148,14 @@ def _ozon_to_rows(postings: list[dict], source_system: str = "ozon") -> list[dic
             line_amount = price * qty if price is not None else None
             offer = str(prod.get("offer_id", ""))
             rid = f"{posting_number}:{offer}" if posting_number else str(p.get("order_id", ""))
+            cc = prod.get("currency_code")
             rows.append(
                 {
                     "source_system": source_system,
                     "source_record_id": rid,
                     "event_datetime": base_time,
                     "amount": line_amount,
-                    "currency_code": prod.get("currency_code"),
+                    "currency_code": str(cc).strip().upper() if cc else None,
                     "counterparty_name": None,
                     "channel": "marketplace",
                     "line_description": prod.get("name"),
@@ -129,6 +163,12 @@ def _ozon_to_rows(postings: list[dict], source_system: str = "ozon") -> list[dic
                 }
             )
     return rows
+
+
+def _fuzzy_threshold_for_source(mappings: dict[str, Any], source_cfg: dict[str, Any]) -> int:
+    opts = mappings.get("options") or {}
+    default = int(opts.get("fuzzy_column_threshold", 0))
+    return int(source_cfg.get("fuzzy_column_threshold", default))
 
 
 def build_canonical_sales_rows(
@@ -142,34 +182,34 @@ def build_canonical_sales_rows(
     all_rows: list[dict[str, Any]] = []
     stats: dict[str, Any] = {"canonical": mappings.get("canonical"), "per_source": {}}
 
-    # Ozon
     oz_cfg = sources_cfg.get("ozon") or {}
     if oz_cfg.get("handler") == "ozon_fbs_postings":
         oz_rows = _ozon_to_rows(raw_ozon.get("postings") or [], raw_ozon.get("source_system", "ozon"))
         all_rows.extend(oz_rows)
         stats["per_source"]["ozon"] = {"rows": len(oz_rows)}
 
-    # 1C tabular
     onec_cfg = sources_cfg.get("1c") or {}
     if onec_cfg.get("handler") == "column_map":
         fm = onec_cfg.get("fields") or {}
+        thr = _fuzzy_threshold_for_source(mappings, onec_cfg)
         onec_out: list[dict[str, Any]] = []
         for row in raw_1c.get("rows") or []:
-            onec_out.append(_map_tabular_row(row, fm, raw_1c.get("source_system", "1c")))
+            onec_out.append(_map_tabular_row(row, fm, raw_1c.get("source_system", "1c"), thr))
         all_rows.extend(onec_out)
-        stats["per_source"]["1c"] = {"rows": len(onec_out)}
+        stats["per_source"]["1c"] = {"rows": len(onec_out), "fuzzy_threshold": thr}
 
-    # Google sheet tabular
     gs_cfg = sources_cfg.get("google_sheet") or {}
     if gs_cfg.get("handler") == "column_map":
         fm = gs_cfg.get("fields") or {}
+        thr = _fuzzy_threshold_for_source(mappings, gs_cfg)
         gs_out: list[dict[str, Any]] = []
         for row in raw_google.get("rows") or []:
-            gs_out.append(_map_tabular_row(row, fm, raw_google.get("source_system", "google_sheet")))
+            gs_out.append(
+                _map_tabular_row(row, fm, raw_google.get("source_system", "google_sheet"), thr)
+            )
         all_rows.extend(gs_out)
-        stats["per_source"]["google_sheet"] = {"rows": len(gs_out)}
+        stats["per_source"]["google_sheet"] = {"rows": len(gs_out), "fuzzy_threshold": thr}
 
-    # Дедуп: одинаковый ключ (источник + id строки)
     seen: set[tuple[str, str]] = set()
     deduped: list[dict[str, Any]] = []
     for r in all_rows:
@@ -183,5 +223,8 @@ def build_canonical_sales_rows(
 
     stats["rows_in"] = len(all_rows)
     stats["rows_after_dedup"] = len(deduped)
-    return deduped, stats
 
+    deduped, enrich_meta = enrich_canonical_rows(deduped)
+    stats["enrich"] = enrich_meta
+
+    return deduped, stats

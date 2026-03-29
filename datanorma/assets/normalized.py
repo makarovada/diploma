@@ -5,7 +5,7 @@ from datanorma.normalization.to_canonical import build_canonical_sales_rows, loa
 
 @dg.asset(
     group_name="normalized",
-    description="Каноническая витрина продаж: маппинг из YAML (любая компания — свой source_mappings).",
+    description="Каноника: YAML-маппинг, fuzzy колонок, даты→MSK, amount_rub по ЦБ РФ, дедуп.",
 )
 def normalized_orders(
     raw_ozon_postings: dict,
