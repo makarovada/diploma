@@ -9,6 +9,7 @@ from datanorma.assets import (
     raw_ozon,
     warehouse,
 )
+from datanorma.checks import data_quality
 from datanorma.resources.database import PostgresResource
 from datanorma.resources.paths import DataPathsResource
 from datanorma.schedules.daily_schedule import daily_job, daily_schedule
@@ -16,9 +17,11 @@ from datanorma.schedules.daily_schedule import daily_job, daily_schedule
 all_assets = dg.load_assets_from_modules(
     [raw_ozon, raw_1c, raw_google_sheet, normalized, warehouse]
 )
+all_asset_checks = dg.load_asset_checks_from_modules([data_quality])
 
 defs = dg.Definitions(
     assets=all_assets,
+    asset_checks=all_asset_checks,
     resources={
         "postgres": PostgresResource(),
         "paths": DataPathsResource(),

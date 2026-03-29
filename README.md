@@ -69,6 +69,11 @@
   SELECT * FROM canonical_sales ORDER BY loaded_at DESC LIMIT 20;
   ```
 
+## Этап 5: качество и наблюдаемость
+
+- **Unit-тесты:** каталог `tests/` — нормализация, ЦБ (в т.ч. `Nominal`), fuzzy, enrich с моком, warehouse, **дедуп и склейка трёх источников** (`test_pipeline_stage5.py`). Запуск: `pytest tests/ -q` (нужен `pip install -e ".[dev]"`).
+- **Asset checks (Dagster):** модуль `datanorma/checks/data_quality.py` — после materialize в UI видны проверки «есть строки в `normalized_orders`» и «warehouse записал данные». Статус WARN, если витрина пуста (удобно для демо без Postgres).
+
 Переопределение URL БД: переменная окружения `DATABASE_URL` (см. `.env.example`).
 
 ### Если падает `warehouse_sales` (PostgreSQL)
