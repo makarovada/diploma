@@ -1,0 +1,3 @@
+order_id,order_date,customer_name,amount,currency,channel
+GS-501,2025-01-08,Клиент 1 (пример),4300.00,RUB,offline
+GS-502,2025-01-14,Клиент 2 (пример),2100.00,RUB,online

@@ -1,0 +1,38 @@
+{
+  "result": {
+    "postings": [
+      {
+        "posting_number": "01234567-0001-1",
+        "order_id": 10001,
+        "order_number": "10001",
+        "status": "delivered",
+        "in_process_at": "2025-01-10T09:15:00.000Z",
+        "products": [
+          {
+            "price": "1500.00",
+            "offer_id": "OFFER-BOOK-1",
+            "name": "Учебник Python",
+            "quantity": 1,
+            "currency_code": "RUB"
+          }
+        ]
+      },
+      {
+        "posting_number": "01234567-0002-1",
+        "order_id": 10002,
+        "order_number": "10002",
+        "status": "delivering",
+        "in_process_at": "2025-01-11T12:00:00.000Z",
+        "products": [
+          {
+            "price": "899.50",
+            "offer_id": "OFFER-MUG",
+            "name": "Кружка с логотипом",
+            "quantity": 2,
+            "currency_code": "RUB"
+          }
+        ]
+      }
+    ]
+  }
+}

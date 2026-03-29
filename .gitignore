@@ -136,6 +136,9 @@ celerybeat.pid
 
 # Environments
 .env
+
+# Dagster
+.tmp_dagster_home*/
 .envrc
 .venv
 env/

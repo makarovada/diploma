@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: datanorma
+      POSTGRES_PASSWORD: datanorma
+      POSTGRES_DB: datanorma
+    # Снаружи 5433, чтобы не пересекаться с локальным PostgreSQL на 5432 (типично для Windows).
+    ports:
+      - "5433:5432"
+    volumes:
+      - datanorma_pg_data:/var/lib/postgresql/data
+
+volumes:
+  datanorma_pg_data:

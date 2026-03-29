@@ -1,0 +1,27 @@
+# Маппинг полей источников → canonical_sales_v1.
+# Для своей компании скопируйте файл, поправьте поля под вашу выгрузку
+# и укажите путь в DATANORMA_SOURCE_MAPPINGS_PATH.
+version: 1
+canonical: canonical_sales_v1
+
+sources:
+  ozon:
+    handler: ozon_fbs_postings
+  "1c":
+    handler: column_map
+    fields:
+      ДатаДокумента: event_datetime
+      Номер: source_record_id
+      Контрагент: counterparty_name
+      СуммаДокумента: amount
+      Валюта: currency_code
+      Комментарий: line_description
+  google_sheet:
+    handler: column_map
+    fields:
+      order_id: source_record_id
+      order_date: event_datetime
+      customer_name: counterparty_name
+      amount: amount
+      currency: currency_code
+      channel: channel

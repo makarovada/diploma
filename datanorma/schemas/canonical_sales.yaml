@@ -1,0 +1,42 @@
+# Логическая витрина продаж: любые источники сводятся к этим полям.
+# Конкретные CSV/API вашей компании подключаются через source_mappings.yaml
+# или свой файл (DATANORMA_SOURCE_MAPPINGS_PATH).
+version: 1
+name: canonical_sales_v1
+description: >
+  Универсальный слой фактов продаж/заказов. Аналитик работает с этой моделью
+  в БД/BI; сырые колонки 1С, маркетплейса и таблиц маппятся сюда конфигом.
+
+fields:
+  source_system:
+    type: string
+    description: Идентификатор системы-источника (ozon, 1c, google_sheet, …).
+  source_record_id:
+    type: string
+    description: Стабильный ключ строки в источнике (номер заказа, id строки и т.п.).
+  event_datetime:
+    type: string
+    format: iso8601
+    description: Дата/время события (заказ, отгрузка — по правилам коннектора).
+  amount:
+    type: number
+    description: Сумма в валюте currency_code (до пересчёта в RUB на этапе витрины).
+  currency_code:
+    type: string
+    description: ISO-код валюты, например RUB.
+  counterparty_name:
+    type: string
+    nullable: true
+    description: Клиент/контрагент в терминах источника.
+  channel:
+    type: string
+    nullable: true
+    description: Канал продаж, если есть в источнике.
+  line_description:
+    type: string
+    nullable: true
+    description: Товар/услуга или комментарий к строке.
+  status:
+    type: string
+    nullable: true
+    description: Статус в источнике (если применимо).
