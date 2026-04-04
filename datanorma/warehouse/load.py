@@ -70,6 +70,7 @@ def _row_to_payload(row: dict[str, Any], loaded_at: datetime) -> dict[str, Any] 
         "line_unit_normalized": (
             str(row["line_unit_normalized"]).strip() if row.get("line_unit_normalized") else None
         ),
+        "normalization_meta": row.get("normalization_meta"),
         "loaded_at": loaded_at,
     }
 
@@ -92,8 +93,15 @@ def load_canonical_sales_to_postgres(
     key_cols = ("source_system", "source_record_id")
     update_cols = [c.name for c in table.columns if c.name not in key_cols]
 
+    auto_ddl = __import__("os").environ.get("DATANORMA_AUTO_CREATE_TABLES", "").strip() in (
+        "1",
+        "true",
+        "yes",
+    )
+
     with engine.begin() as conn:
-        table.metadata.create_all(conn, tables=[table], checkfirst=True)
+        if auto_ddl:
+            table.metadata.create_all(conn, tables=[table], checkfirst=True)
 
         for i in range(0, len(payloads), chunk_size):
             chunk = payloads[i : i + chunk_size]

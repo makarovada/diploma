@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Расписание{% endblock %}
+{% block main %}
+<h1>Настройка cron (текстом)</h1>
+<p class="meta">Сохраняется в <code>integration_config.datanorma.schedule_cron</code> (связка с Dagster — внешняя настройка).</p>
+<form method="post">
+  <p><input name="cron" value="{{ cron }}" style="width:100%;max-width:420px;font-family:monospace;" placeholder="0 5 * * *" /></p>
+  <p><button type="submit">Сохранить</button></p>
+</form>
+{% endblock %}

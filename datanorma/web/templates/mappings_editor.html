@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Редактор YAML{% endblock %}
+{% block main %}
+<h1>Редактор source_mappings</h1>
+<p class="meta">Файл: <code>{{ path }}</code></p>
+{% if note %}<p class="ok">{{ note }}</p>{% endif %}
+<form method="post">
+  <p><textarea name="yaml_content" rows="22" style="width:100%;font-family:monospace;">{{ yaml_content }}</textarea></p>
+  <p><button type="submit">Отправить (без записи на диск)</button></p>
+</form>
+{% endblock %}

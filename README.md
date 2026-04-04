@@ -32,7 +32,7 @@
 
    Альтернатива в новых версиях Dagster: `dg dev` (см. предупреждение *SupersessionWarning* в консоли — старая команда пока поддерживается).
 
-   Откройте адрес из вывода команды (обычно http://127.0.0.1:3000). В разделе **Assets** виден граф: **raw** (`raw_ozon_postings`, `raw_1c_orders`, `raw_google_sheet_orders`) → `normalized_orders` → `warehouse_sales`. Расписание **daily_moscow** (05:00 Europe/Moscow) в **Automation**.
+   Откройте адрес из вывода команды (обычно http://127.0.0.1:3000). В разделе **Assets** виден граф: **raw** → **`staging_raw_postgres`** (запись в `raw_*_staging` + `sync_state`) → **`normalized_orders`** → **`warehouse_sales`**. Расписание **daily_moscow** (05:00 Europe/Moscow) в **Automation**.
 
 ## Этап 2: raw-источники
 
@@ -59,9 +59,57 @@
 
 Тесты: `pytest tests/ -q` (нужен `pip install -e ".[dev]"`).
 
+## Фаза А: схема БД (Alembic) и сиды
+
+Целевая схема (≥10 таблиц: справочники, staging raw, витрина, роли/пользователи, конфиги, аудит) задаётся миграциями в `alembic/versions/`. После `docker compose up -d`:
+
+```bash
+alembic upgrade head
+python scripts/seed_database.py
+```
+
+Сиды добавляют демо-данные (в т.ч. **520+** строк в `canonical_sales` с префиксом `seed_*`) и вспомогательные строки в других таблицах; повторный запуск скрипта очищает только «сидовые» ключи и перезаполняет их.
+
+Переменная **`DATABASE_URL`** — как у Dagster (см. `.env.example`).
+
+## Фаза B: raw в PostgreSQL (staging)
+
+После фазы А пайплайн фиксирует сырой слой в БД до нормализации (аналог **landing / raw** в medallion или буфера в ELT):
+
+- Asset **`staging_raw_postgres`** (`datanorma/assets/staging_postgres.py`) пишет в **`raw_ozon_staging`** (по одной строке на отправление), **`raw_1c_staging`** и **`raw_sheet_staging`** (по строке выгрузки), в одном прогоне используется общий **`ingest_batch_id`** (UUID).
+- В **`sync_state`** обновляются курсоры для кодов `ozon`, `1c`, `google_sheet` (JSON с `batch_id`, режимом ingest и числом строк).
+- **`normalized_orders`** зависит от `staging_raw_postgres`, поэтому порядок материализации: raw → staging → каноника → warehouse.
+
+Логика вставок: `datanorma/warehouse/raw_staging.py`. Нужны применённые миграции Alembic (таблицы staging).
+
+### Веб-UI и API: три роли (JWT + матрица доступа)
+
+Для методички (свои экраны, матрица «роль × операция», скриншоты под разными учётками):
+
+1. Поднять БД, миграции и сиды (`alembic upgrade head`, `python scripts/seed_database.py`) — в `app_user` / `role` / `user_role` появятся демо-пользователи.
+2. Запуск UI и REST: **`python -m datanorma.web`** → корень **`/`** ведёт на **`/app/login`** (веб-клиент Jinja2). REST: префикс **`/api`**. Классический одностраничный интерфейс сохранён на **`/ui/`**.
+3. Демо-пароли (см. также экран входа): **`seed_admin` / AdminDemo2026**, **`seed_integrator` / IntegratorDemo2026**, **`seed_analyst` / AnalystDemo2026**.
+4. Каждый защищённый маршрут API сопоставлен с **операцией** в `datanorma/web/rbac_matrix.py`; JWT содержит **claims `roles`**; при запрете — **403** с указанием операции.
+5. **Dagster** остаётся операционной консолью; для ВКР основной акцент — на **веб-клиенте** (фаза C) и матрице доступа.
+6. Готовый текст для главы диплома: **`docs/vkr_rbac_text.md`**.
+
+Переменные: **`DATANORMA_JWT_SECRET`**, **`DATANORMA_DAGSTER_UI_URL`** (см. `.env.example`).
+
+## Фаза C: веб-клиент (≥20 экранов, Jinja2)
+
+Реализовано **FastAPI + Jinja2** (альтернатива Streamlit — быстрее набрать экраны, но здесь единый стек с API и **явные URL** для скриншотов). Уточните у кафедры, засчитывают ли такие страницы как «экранные формы»; при необходимости сравнение с Streamlit можно описать в ВКР.
+
+- **Вход:** форма на **`/app/login`** (POST), сессия через **httpOnly cookie** + тот же JWT, что и для API.
+- **≥20 уникальных маршрутов** под шаблоны в `datanorma/web/templates/`; роутинг и данные — `datanorma/web/pages_jinja.py`. Навигация в `base.html` дублирует список из кода (подпись, URL, операция RBAC).
+- **UI в духе Airbyte:** светлая консоль (`datanorma/web/static/theme-airbyte.css`), секции **Sources**, **Destinations**, **Connections**, sync history / settings / secrets; оркестрация вынесена в **Dagster** (`/app/external/dagster`). Подробнее о сходстве и отличиях — **`/app/about`**.
+- Примеры экранов: смена пароля, дашборд (Home), **connections** и **destinations**, источники и карточка, ключи/env с маскированием, маппинги и редактор YAML (отправка без записи на диск), предпросмотр sample, запуски и детали run, **статическая схема** пайплайна + ссылка на Dagster, витрина с фильтром, страница экспорта и **`/app/warehouse/download.csv`**, справочники, админ-пользователи, назначение ролей, журнал нормализации, cron в настройках, «о системе и FAQ».
+- На каждой странице проверка **операции** из `rbac_matrix.py` (как и для REST); при отсутствии прав — страница **403** (`forbidden.html`).
+- Перечень путей для приложения к ВКР: **`docs/phase_c_routes.md`**.
+
 ## Этап 4: warehouse (PostgreSQL)
 
-- Asset **`warehouse_sales`** создаёт таблицу **`canonical_sales`** (имя можно переопределить: `DATANORMA_WAREHOUSE_TABLE`) и выполняет **UPSERT** по ключу `(source_system, source_record_id)` из `normalized_orders["rows"]`.
+- Таблица **`canonical_sales`** (и остальные объекты фазы А) создаётся миграциями Alembic. Asset **`warehouse_sales`** выполняет **UPSERT** по ключу `(source_system, source_record_id)` из `normalized_orders["rows"]` (имя таблицы: `DATANORMA_WAREHOUSE_TABLE`, по умолчанию `canonical_sales`).
+- Если миграции пока не применялись, можно включить устаревшее автосоздание только витрины: `DATANORMA_AUTO_CREATE_TABLES=1` (не рекомендуется для согласованной схемы).
 - Строки без `source_record_id` в warehouse **не пишутся** (нет стабильного ключа).
 - Проверка для аналитика после materialize:
 
@@ -72,7 +120,7 @@
 ## Этап 5: качество и наблюдаемость
 
 - **Unit-тесты:** каталог `tests/` — нормализация, ЦБ (в т.ч. `Nominal`), fuzzy, enrich с моком, warehouse, **дедуп и склейка трёх источников** (`test_pipeline_stage5.py`). Запуск: `pytest tests/ -q` (нужен `pip install -e ".[dev]"`).
-- **Asset checks (Dagster):** модуль `datanorma/checks/data_quality.py` — после materialize в UI видны проверки «есть строки в `normalized_orders`» и «warehouse записал данные». Статус WARN, если витрина пуста (удобно для демо без Postgres).
+- **Asset checks (Dagster):** модуль `datanorma/checks/data_quality.py` — проверки staging (хотя бы одна запись raw в БД), непустой `normalized_orders` и запись в warehouse. Статус WARN при пустых данных (удобно для демо без Postgres или без материализации).
 
 Переопределение URL БД: переменная окружения `DATABASE_URL` (см. `.env.example`).
 

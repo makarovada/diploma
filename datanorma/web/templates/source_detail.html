@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Источник {{ row.code }}{% endblock %}
+{% block main %}
+<h1>{{ row.name }}</h1>
+<p class="meta">Код: <strong>{{ row.code }}</strong></p>
+<p>{{ row.description or "—" }}</p>
+{% if sync_json %}
+<h2>sync_state</h2>
+<pre>{{ sync_json }}</pre>
+{% else %}
+<p class="meta">Нет строки в sync_state для этого кода.</p>
+{% endif %}
+<p><a href="/app/sources">← К списку</a></p>
+{% endblock %}

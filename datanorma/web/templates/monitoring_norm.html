@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Нормализация{% endblock %}
+{% block main %}
+<h1>Журнал normalization_issue</h1>
+<table><thead><tr><th>id</th><th>тип</th><th>источник</th><th>поле</th><th>сообщение</th><th>время</th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td>{{ r.id }}</td>
+  <td>{{ r.issue_type }}</td>
+  <td>{{ r.source_system }}</td>
+  <td>{{ r.field_name }}</td>
+  <td><small>{{ r.message }}</small></td>
+  <td><small>{{ r.created_at }}</small></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% endblock %}

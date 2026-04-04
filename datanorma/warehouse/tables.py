@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 
 from sqlalchemy import Column, Date, DateTime, MetaData, Numeric, PrimaryKeyConstraint, String, Table, Text
+from sqlalchemy.dialects.postgresql import JSONB
 
 metadata = MetaData()
 
@@ -29,6 +30,7 @@ def canonical_sales_table(name: str | None = None) -> Table:
         Column("status", String(128)),
         Column("cbr_rate_date", Date),
         Column("line_unit_normalized", String(64)),
+        Column("normalization_meta", JSONB),
         Column("loaded_at", DateTime(timezone=True), nullable=False),
         PrimaryKeyConstraint("source_system", "source_record_id"),
     )

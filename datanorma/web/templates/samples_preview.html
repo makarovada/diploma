@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Sample{% endblock %}
+{% block main %}
+<h1>Предпросмотр sample</h1>
+<p class="meta">Каталог: <code>{{ samples_dir }}</code></p>
+<h2>Файлы</h2>
+<ul>{% for f in files %}<li>{{ f.name }} ({{ f.size }} байт)</li>{% endfor %}</ul>
+<h2>Первые строки 1c_export.csv</h2>
+<pre>{% for line in preview_lines %}{{ line }}
+{% endfor %}</pre>
+{% endblock %}

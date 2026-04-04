@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}About — DataNorma{% endblock %}
+{% block main %}
+<h1 class="ab-page-title">About &amp; FAQ</h1>
+<p class="ab-page-desc"><strong>DataNorma</strong> — дипломный прототип EL-платформы с упором на российские источники (Ozon, 1С, Sheets) и нормализацию под аналитику.</p>
+
+<h2 class="ab-page-title" style="font-size:1.1rem;">Сходство с Airbyte</h2>
+<p class="meta">Визуально и по смыслу UI опирается на <strong>Airbyte</strong> (open-source EL):</p>
+<ul class="meta" style="line-height:1.6;">
+  <li><strong>Sources</strong> — коннекторы и каталог источников; карточка источника и sync state.</li>
+  <li><strong>Destinations</strong> — в прототипе одно назначение, PostgreSQL (staging + витрина <code>canonical_sales</code>).</li>
+  <li><strong>Connections</strong> — логические связи source→destination, статусы и история sync jobs.</li>
+  <li><strong>Settings / Secrets</strong> — параметры и маскирование (как configuration with secrets).</li>
+  <li><strong>Normalization</strong> — у Airbyte dbt/typing; здесь — YAML-маппинг, fuzzy, ЦБ РФ, каноническая схема.</li>
+</ul>
+<p class="meta">Отличия: оркестрация через <strong>Dagster</strong> (отдельная «операционная консоль»), а не встроенный job-runner Airbyte; нет отдельного marketplace коннекторов — фиксированный набор + конфиг.</p>
+
+<h2 class="ab-page-title" style="font-size:1.1rem;">Роли</h2>
+<ul>
+  <li><strong>Администратор платформы</strong> — пользователи, роли, секреты, полный доступ.</li>
+  <li><strong>Интегратор данных</strong> — staging, маппинги, запуски, cron; Dagster как консоль.</li>
+  <li><strong>Аналитик</strong> — только чтение витрины и справочников.</li>
+</ul>
+<h2>FAQ</h2>
+<dl>
+  <dt>Засчитываются ли экраны?</dt>
+  <dd>Каждый пункт меню — отдельный маршрут <code>/app/...</code> (Jinja2), подходит под требование «экранных форм»; уточните у кафедры при необходимости.</dd>
+  <dt>Streamlit?</dt>
+  <dd>Для сравнения в ВКР: Streamlit быстрее для прототипа, но здесь выбран <strong>FastAPI + Jinja2</strong> для явных URL и единого стека с REST API.</dd>
+</dl>
+<h2>Подсказка по навигации</h2>
+<pre class="box">{{ matrix_hint }}</pre>
+{% endblock %}

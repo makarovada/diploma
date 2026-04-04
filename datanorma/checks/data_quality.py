@@ -5,7 +5,25 @@ from __future__ import annotations
 import dagster as dg
 
 from datanorma.assets.normalized import normalized_orders
+from datanorma.assets.staging_postgres import staging_raw_postgres
 from datanorma.assets.warehouse import warehouse_sales
+
+
+@dg.asset_check(
+    asset=staging_raw_postgres,
+    description="В staging записан хотя бы один сырой объект (Ozon/1С/лист).",
+)
+def staging_raw_has_rows(staging_raw_postgres: dict) -> dg.AssetCheckResult:
+    n = (
+        int(staging_raw_postgres.get("ozon_rows_written") or 0)
+        + int(staging_raw_postgres.get("onec_rows_written") or 0)
+        + int(staging_raw_postgres.get("sheet_rows_written") or 0)
+    )
+    return dg.AssetCheckResult(
+        passed=n > 0,
+        metadata={"staging_rows_total": dg.MetadataValue.int(n)},
+        severity=dg.AssetCheckSeverity.WARN,
+    )
 
 
 @dg.asset_check(asset=normalized_orders, description="В канонической витрине есть хотя бы одна строка.")

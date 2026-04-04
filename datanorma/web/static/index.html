@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DataNorma — API console (терминология как в Airbyte)</title>
+  <style>
+    :root { --bg: #0f1419; --panel: #1a2332; --text: #e7ecf3; --muted: #8b9bb4; --accent: #3d8bfd; --ok: #3ecf8e; --err: #f87171; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, Segoe UI, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+    a { color: var(--accent); }
+    #login { max-width: 360px; margin: 4rem auto; padding: 1.5rem; background: var(--panel); border-radius: 12px; }
+    #login h1 { margin-top: 0; font-size: 1.25rem; }
+    #login input, #login button { width: 100%; margin: 0.5rem 0; padding: 0.6rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: var(--text); }
+    #login button { background: var(--accent); border: none; cursor: pointer; font-weight: 600; }
+    #app { display: none; grid-template-columns: 260px 1fr; min-height: 100vh; }
+    #app.visible { display: grid; }
+    nav { background: var(--panel); padding: 1rem; overflow-y: auto; border-right: 1px solid #334155; }
+    nav h2 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 1rem 0 0.5rem; }
+    nav button { display: block; width: 100%; text-align: left; padding: 0.45rem 0.5rem; margin: 0.15rem 0; border: none; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; font-size: 0.85rem; }
+    nav button:hover { background: #243044; }
+    nav button.disabled { opacity: 0.35; cursor: not-allowed; }
+    nav button.active { background: #243044; color: var(--accent); }
+    main { padding: 1.25rem 1.5rem; overflow: auto; }
+    main h1 { font-size: 1.35rem; margin-top: 0; }
+    .meta { color: var(--muted); font-size: 0.9rem; margin-bottom: 1rem; }
+    pre, .box { background: #0f172a; padding: 1rem; border-radius: 8px; overflow: auto; font-size: 0.8rem; max-height: 60vh; }
+    table.matrix { border-collapse: collapse; width: 100%; font-size: 0.75rem; }
+    table.matrix th, table.matrix td { border: 1px solid #334155; padding: 0.35rem 0.5rem; text-align: center; }
+    table.matrix th:first-child, table.matrix td:first-child { text-align: left; max-width: 220px; }
+    .yes { color: var(--ok); } .no { color: var(--muted); }
+    .toolbar { margin-bottom: 1rem; }
+    .err { color: var(--err); }
+    .logout { float: right; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <div id="login">
+    <h1>Вход — SPA на <code>/ui/</code></h1>
+    <p class="meta">Те же роли и API, что у Jinja2-консоли (Sources / Destinations / Connections — в основном клиенте). Учётки после <code>python scripts/seed_database.py</code>:<br/>
+      <strong>seed_admin</strong> / AdminDemo2026<br/>
+      <strong>seed_integrator</strong> / IntegratorDemo2026<br/>
+      <strong>seed_analyst</strong> / AnalystDemo2026</p>
+    <input id="u" placeholder="Логин" autocomplete="username" />
+    <input id="p" type="password" placeholder="Пароль" autocomplete="current-password" />
+    <button type="button" id="btnLogin">Войти</button>
+    <p id="loginErr" class="err"></p>
+  </div>
+
+  <div id="app">
+    <nav id="nav"></nav>
+    <main>
+      <div class="toolbar">
+        <span id="who"></span>
+        <button type="button" class="logout" id="btnLogout">Выйти</button>
+      </div>
+      <h1 id="screenTitle">—</h1>
+      <p class="meta" id="screenMeta"></p>
+      <div id="content"></div>
+    </main>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "datanorma_jwt";
+    const api = (path, opts = {}) => {
+      const h = { "Content-Type": "application/json", ...opts.headers };
+      const t = localStorage.getItem(TOKEN_KEY);
+      if (t) h["Authorization"] = "Bearer " + t;
+      return fetch(path, { ...opts, headers: h }).then(async r => {
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw { status: r.status, data };
+        return data;
+      });
+    };
+
+    const SCREENS = [
+      { id: 1, title: "Обзор и роли", op: null, fetch: () => api("/api/auth/me"), render: (d) => "<pre>" + JSON.stringify(d, null, 2) + "</pre>" },
+      { id: 2, title: "Матрица «роль × операция»", op: "view_rbac_matrix", path: "/api/rbac/matrix", renderTable: true },
+      { id: 3, title: "Операционная консоль (Dagster)", op: "view_ops_console_hint", path: "/api/meta/dagster-url", render: (d) =>
+        "<p>Технический инструмент оркестрации. В методичке основной акцент на экранах этого UI.</p>" +
+        "<p><a href=\"" + d.dagster_ui_url + "\" target=\"_blank\" rel=\"noopener\">Открыть Dagster UI →</a></p><pre>" + JSON.stringify(d, null, 2) + "</pre>" },
+      { id: 4, title: "Destination / витрина: сводка", op: "view_sales_summary", path: "/api/data/sales-summary" },
+      { id: 5, title: "Destination / витрина: строки", op: "view_sales_rows", path: "/api/data/sales-rows?limit=30" },
+      { id: 6, title: "Export (как CSV из destination)", op: "export_sales_csv", path: "/api/data/export-sales-csv?limit=200", render: (d) =>
+        "<p>Клиентское формирование CSV для отчёта. Строк: " + (d.rows && d.rows.length) + "</p><pre>" + JSON.stringify(d.rows, null, 2).slice(0, 12000) + "</pre>" },
+      { id: 7, title: "Staging: счётчики", op: "view_staging_counts", path: "/api/data/staging-counts" },
+      { id: 8, title: "Staging: образец Ozon", op: "view_staging_ozon_sample", path: "/api/data/staging-ozon-sample" },
+      { id: 9, title: "Staging: образец 1С", op: "view_staging_1c_sample", path: "/api/data/staging-1c-sample" },
+      { id: 10, title: "Staging: образец Sheets", op: "view_staging_sheet_sample", path: "/api/data/staging-sheet-sample" },
+      { id: 11, title: "Состояние интеграций (sync_state)", op: "view_sync_state", path: "/api/data/sync-state" },
+      { id: 12, title: "Нормализация: issues", op: "view_normalization_issues", path: "/api/data/normalization-issues?limit=40" },
+      { id: 13, title: "Профили маппинга", op: "view_mapping_profiles", path: "/api/data/mapping-profiles" },
+      { id: 14, title: "Изменение маппинга (заглушка)", op: "edit_mapping_profiles", post: "/api/data/mapping-profiles/stub", render: (d) => "<pre>" + JSON.stringify(d, null, 2) + "</pre>" },
+      { id: 15, title: "Справочник источников", op: "view_dim_sources", path: "/api/data/dim-sources" },
+      { id: 16, title: "Справочник валют", op: "view_dim_currencies", path: "/api/data/dim-currencies" },
+      { id: 17, title: "Админ: пользователи", op: "view_admin_users", path: "/api/admin/users" },
+      { id: 18, title: "Админ: роли", op: "view_admin_roles", path: "/api/admin/roles" },
+      { id: 19, title: "Админ: конфигурации (+ форма добавления)", op: "view_integration_config", path: "/api/admin/integration-config", adminForm: true },
+      { id: 20, title: "Sync history (pipeline runs)", op: "view_pipeline_runs", path: "/api/data/pipeline-runs?limit=25" },
+    ];
+
+    let meRoles = new Set();
+
+    function can(op) {
+      if (!op) return true;
+      const allowed = {
+        view_rbac_matrix: ["platform_admin", "data_integrator", "analyst"],
+        view_ops_console_hint: ["platform_admin", "data_integrator"],
+        view_sales_summary: ["platform_admin", "data_integrator", "analyst"],
+        view_sales_rows: ["platform_admin", "data_integrator", "analyst"],
+        export_sales_csv: ["platform_admin", "data_integrator", "analyst"],
+        view_staging_counts: ["platform_admin", "data_integrator"],
+        view_staging_ozon_sample: ["platform_admin", "data_integrator"],
+        view_staging_1c_sample: ["platform_admin", "data_integrator"],
+        view_staging_sheet_sample: ["platform_admin", "data_integrator"],
+        view_sync_state: ["platform_admin", "data_integrator"],
+        view_normalization_issues: ["platform_admin", "data_integrator"],
+        view_mapping_profiles: ["platform_admin", "data_integrator"],
+        edit_mapping_profiles: ["platform_admin", "data_integrator"],
+        view_dim_sources: ["platform_admin", "data_integrator", "analyst"],
+        view_dim_currencies: ["platform_admin", "data_integrator", "analyst"],
+        view_admin_users: ["platform_admin"],
+        view_admin_roles: ["platform_admin"],
+        view_integration_config: ["platform_admin"],
+        edit_integration_config: ["platform_admin"],
+        view_pipeline_runs: ["platform_admin", "data_integrator"],
+      };
+      const ok = allowed[op] || [];
+      return ok.some(r => meRoles.has(r));
+    }
+
+    function buildNav() {
+      const nav = document.getElementById("nav");
+      nav.innerHTML = "<h2>Monitor &amp; data (API)</h2><p class=\"meta\" style=\"font-size:0.75rem;margin:0 0 0.75rem 0;\">Полный UI с группами — <code>/app/dashboard</code></p>";
+      SCREENS.forEach(s => {
+        const b = document.createElement("button");
+        b.textContent = s.id + ". " + s.title;
+        b.dataset.id = s.id;
+        if (s.op && !can(s.op)) b.classList.add("disabled");
+        b.addEventListener("click", () => openScreen(s.id));
+        nav.appendChild(b);
+      });
+    }
+
+    function renderMatrix(payload) {
+      const roles = payload.roles.map(r => r.name);
+      let h = "<table class=\"matrix\"><thead><tr><th>Операция</th>";
+      roles.forEach(r => { h += "<th>" + r + "</th>"; });
+      h += "</tr></thead><tbody>";
+      payload.operations.forEach(op => {
+        h += "<tr><td>" + op.label_ru + "</td>";
+        roles.forEach(r => {
+          h += "<td class=\"" + (op.cells[r] ? "yes" : "no") + "\">" + (op.cells[r] ? "✓" : "—") + "</td>";
+        });
+        h += "</tr>";
+      });
+      h += "</tbody></table>";
+      return h;
+    }
+
+    async function openScreen(id) {
+      const s = SCREENS.find(x => x.id === id);
+      document.querySelectorAll("#nav button").forEach(b => b.classList.toggle("active", +b.dataset.id === id));
+      document.getElementById("screenTitle").textContent = s.title;
+      document.getElementById("screenMeta").textContent = s.op ? "Операция RBAC: " + s.op : "Без отдельной операции (доступен всем авторизованным)";
+      const el = document.getElementById("content");
+      el.innerHTML = "<p>Загрузка…</p>";
+      try {
+        if (s.op && !can(s.op)) {
+          el.innerHTML = "<p class=\"err\">Нет прав на этот экран (для скриншота войдите под другой учёткой).</p>";
+          return;
+        }
+        if (s.fetch) {
+          const d = await s.fetch();
+          el.innerHTML = s.render(d);
+          return;
+        }
+        if (s.post) {
+          const d = await api(s.post, { method: "POST", body: "{}" });
+          el.innerHTML = s.render ? s.render(d) : "<pre>" + JSON.stringify(d, null, 2) + "</pre>";
+          return;
+        }
+        const d = await api(s.path);
+        if (s.renderTable) el.innerHTML = renderMatrix(d);
+        else if (s.render) el.innerHTML = s.render(d);
+        else if (s.adminForm && can("edit_integration_config")) {
+          el.innerHTML = "<pre>" + JSON.stringify(d, null, 2) + "</pre>" +
+            "<h3>Добавить ключ (операция edit_integration_config)</h3>" +
+            "<form id=\"cfgForm\"><p><input name=\"k\" placeholder=\"config_key\" required style=\"width:100%;max-width:420px;padding:0.5rem\"/></p>" +
+            "<p><input name=\"v\" placeholder=\"config_value\" style=\"width:100%;max-width:420px;padding:0.5rem\"/></p>" +
+            "<p><label><input type=\"checkbox\" name=\"sec\"/> is_secret</label></p>" +
+            "<button type=\"submit\">POST /api/admin/integration-config</button></form><p id=\"cfgOut\" class=\"err\"></p>";
+          document.getElementById("cfgForm").onsubmit = async (ev) => {
+            ev.preventDefault();
+            const fd = new FormData(ev.target);
+            try {
+              const r = await api("/api/admin/integration-config", { method: "POST", body: JSON.stringify({
+                config_key: fd.get("k"), config_value: fd.get("v") || "", is_secret: fd.get("sec") === "on"
+              })});
+              document.getElementById("cfgOut").textContent = JSON.stringify(r);
+              openScreen(19);
+            } catch (e) { document.getElementById("cfgOut").textContent = JSON.stringify(e.data || e); }
+          };
+        } else el.innerHTML = "<pre>" + JSON.stringify(d, null, 2) + "</pre>";
+      } catch (e) {
+        const msg = e.data && e.data.detail ? JSON.stringify(e.data.detail) : (e.message || "Ошибка");
+        el.innerHTML = "<p class=\"err\">" + (e.status === 403 ? "403 — запрещено для вашей роли." : "") + "</p><pre class=\"err\">" + msg + "</pre>";
+      }
+    }
+
+    async function afterLogin() {
+      const me = await api("/api/auth/me");
+      meRoles = new Set(me.roles);
+      document.getElementById("who").textContent = me.username + " — роли: " + me.roles.join(", ");
+      document.getElementById("login").style.display = "none";
+      document.getElementById("app").classList.add("visible");
+      buildNav();
+      openScreen(1);
+    }
+
+    document.getElementById("btnLogin").onclick = async () => {
+      document.getElementById("loginErr").textContent = "";
+      try {
+        const r = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: document.getElementById("u").value, password: document.getElementById("p").value }),
+        });
+        const d = await r.json();
+        if (!r.ok) throw new Error(d.detail || "Ошибка входа");
+        localStorage.setItem(TOKEN_KEY, d.access_token);
+        await afterLogin();
+      } catch (e) {
+        document.getElementById("loginErr").textContent = e.message || String(e);
+      }
+    };
+
+    document.getElementById("btnLogout").onclick = () => {
+      localStorage.removeItem(TOKEN_KEY);
+      location.reload();
+    };
+
+    (async () => {
+      if (localStorage.getItem(TOKEN_KEY)) {
+        try { await afterLogin(); } catch { localStorage.removeItem(TOKEN_KEY); }
+      }
+    })();
+  </script>
+</body>
+</html>

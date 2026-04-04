@@ -77,3 +77,4 @@ def test_enrich_amount_rub_monkeypatch(monkeypatch: pytest.MonkeyPatch) -> None:
     out, meta = enrich_canonical_rows(rows, fallback_rate_date=date(2025, 1, 15))
     assert out[0]["amount_rub"] == 250.0
     assert "cbr_dates" in meta
+    assert out[0]["normalization_meta"]["cbr_rate_date"] == "2025-01-15"

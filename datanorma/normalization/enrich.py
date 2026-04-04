@@ -57,5 +57,10 @@ def enrich_canonical_rows(
                 row["line_unit_normalized"] = normalize_unit_label(str(lud))
             elif "line_unit_normalized" not in row:
                 row["line_unit_normalized"] = None
+            row["normalization_meta"] = {
+                "event_timezone": "Europe/Moscow",
+                "cbr_rate_date": d.isoformat(),
+                "rates_keys_count": len(rates),
+            }
 
     return out, meta

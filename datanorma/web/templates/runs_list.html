@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Запуски{% endblock %}
+{% block main %}
+<h1>Запуски пайплайна</h1>
+<table><thead><tr><th>id</th><th>job</th><th>status</th><th>run id</th><th></th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr>
+  <td>{{ r.id }}</td><td>{{ r.job_name }}</td><td>{{ r.status }}</td><td><small>{{ r.dagster_run_id }}</small></td>
+  <td><a href="/app/runs/{{ r.id }}">Детали</a></td>
+</tr>
+{% endfor %}
+</tbody></table>
+{% endblock %}

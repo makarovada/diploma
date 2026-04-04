@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Sources — DataNorma{% endblock %}
+{% block main %}
+<h1 class="ab-page-title">Sources</h1>
+<p class="ab-page-desc">Каталог источников (как <strong>Sources</strong> в Airbyte): коннекторы и привязка к <code>sync_state</code>.</p>
+<h2 class="ab-page-title" style="font-size:1rem;">Catalog</h2>
+<table class="data-table"><thead><tr><th>Connector</th><th>Name</th><th></th></tr></thead>
+<tbody>
+{% for r in rows %}
+<tr><td>{{ r.code }}</td><td>{{ r.name }}</td><td><a href="/app/sources/{{ r.code }}">Open</a></td></tr>
+{% endfor %}
+</tbody></table>
+<h2 class="ab-page-title" style="font-size:1rem;margin-top:1.5rem;">Sync state (cursors)</h2>
+<table class="data-table"><thead><tr><th>Integration</th><th>Cursor</th><th>Last success</th></tr></thead>
+<tbody>
+{% for r in sync_rows %}
+<tr><td>{{ r.integration_code }}</td><td><pre style="margin:0;white-space:pre-wrap;">{{ r.cursor_value }}</pre></td><td>{{ r.last_success_at }}</td></tr>
+{% endfor %}
+</tbody></table>
+{% endblock %}

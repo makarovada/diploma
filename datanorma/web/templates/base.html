@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{% block title %}DataNorma{% endblock %}</title>
+  <link rel="stylesheet" href="/ui/theme-airbyte.css" />
+  {% block extra_css %}{% endblock %}
+</head>
+<body class="ab-console">
+  {% if nav_groups %}
+  <aside class="ab-sidebar">
+    <div class="ab-brand">
+      <div class="ab-brand-name">DataNorma</div>
+      <div class="ab-brand-sub">EL-консоль в духе Airbyte: Sources → Destinations → Connections, нормализация в PostgreSQL</div>
+    </div>
+    <div class="ab-userbar">
+      <span title="{{ user.username }}">{{ user.username }}</span>
+      <a href="/app/logout" class="ab-btn" style="padding:0.35rem 0.65rem;font-size:0.75rem;">Sign out</a>
+    </div>
+    <div class="ab-nav-scroll ab-nav">
+      {% for group in nav_groups %}
+      <div class="ab-nav-group">
+        <div class="ab-nav-title">{{ group.title }}</div>
+        {% for item in group.items %}
+        <a href="{{ item.href }}" class="{% if item.allowed %}ab-nav-ok{% else %}ab-nav-dis{% endif %}" {% if not item.allowed %}title="No access for this role"{% endif %}>{{ item.label }}</a>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+  </aside>
+  {% endif %}
+  <main class="ab-main">
+    {% block main %}{% endblock %}
+  </main>
+</body>
+</html>

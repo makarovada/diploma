@@ -5,13 +5,16 @@ from datanorma.normalization.to_canonical import build_canonical_sales_rows, loa
 
 @dg.asset(
     group_name="normalized",
-    description="Каноника: YAML-маппинг, fuzzy колонок, даты→MSK, amount_rub по ЦБ РФ, дедуп.",
+    description="Каноника: YAML-маппинг, fuzzy колонок, даты→MSK, amount_rub по ЦБ РФ, дедуп. "
+    "Зависит от staging_raw_postgres, чтобы raw сначала попал в PostgreSQL (фаза B).",
 )
 def normalized_orders(
     raw_ozon_postings: dict,
     raw_1c_orders: dict,
     raw_google_sheet_orders: dict,
+    staging_raw_postgres: dict,
 ) -> dict:
+    _ = staging_raw_postgres
     mappings = load_source_mappings()
     rows, stats = build_canonical_sales_rows(
         raw_ozon_postings,

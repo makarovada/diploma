@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Валюты{% endblock %}
+{% block main %}
+<h1>Справочник валют</h1>
+<table><thead><tr><th>Код</th><th>Название</th></tr></thead>
+<tbody>{% for r in rows %}<tr><td>{{ r.code }}</td><td>{{ r.name }}</td></tr>{% endfor %}</tbody></table>
+{% endblock %}

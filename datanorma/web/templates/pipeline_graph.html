@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Схема пайплайна{% endblock %}
+{% block main %}
+<h1>Граф зависимостей (статика)</h1>
+<p class="meta">Логический поток DataNorma. Детальный граф и запуск — в Dagster.</p>
+<pre class="box">
+  ┌─────────────────┐     ┌──────────────────────┐
+  │ raw_ozon_postings│     │ raw_1c_orders        │
+  └────────┬─────────┘     └──────────┬───────────┘
+           │                          │
+           │    ┌─────────────────────┴───────────┐
+           │    │ raw_google_sheet_orders         │
+           │    └────────────┬────────────────────┘
+           │                 │
+           ▼                 ▼
+      ┌─────────────────────────────┐
+      │   staging_raw_postgres      │  ← raw_*_staging в PostgreSQL
+      └─────────────┬───────────────┘
+                    ▼
+      ┌─────────────────────────────┐
+      │      normalized_orders       │  ← каноника, ЦБ, fuzzy
+      └─────────────┬───────────────┘
+                    ▼
+      ┌─────────────────────────────┐
+      │      warehouse_sales         │  ← canonical_sales
+      └─────────────────────────────┘
+
+  Оркестрация: Dagster (daily_refresh / daily_moscow)
+</pre>
+<p><a class="btn" href="{{ dagster_url }}" target="_blank" rel="noopener">Открыть Dagster UI</a></p>
+{% endblock %}

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Connections — DataNorma{% endblock %}
+{% block main %}
+<h1 class="ab-page-title">Connections</h1>
+<p class="ab-page-desc">Список логических подключений (как <strong>Connections</strong> в Airbyte): источник, назначение PostgreSQL, последняя успешная синхронизация.</p>
+
+<div class="ab-card-grid">
+  {% for c in connection_cards %}
+  <div class="ab-card ab-conn-card">
+    <span class="ab-badge ab-badge-{{ c.badge }}">{{ c.status_label }}</span>
+    <h3>{{ c.source_name }}</h3>
+    <p class="ab-conn-meta">{{ c.flow }}</p>
+    <p class="ab-conn-meta">integration_code: <code>{{ c.code }}</code></p>
+    <p class="ab-conn-meta">last_success_at: <strong>{{ c.last_sync or "—" }}</strong></p>
+    <a class="ab-btn ab-btn-secondary" style="margin-top:0.5rem;font-size:0.8rem;" href="/app/sources/{{ c.code }}">Configure source</a>
+  </div>
+  {% endfor %}
+</div>
+
+<h2 class="ab-page-title" style="font-size:1.15rem;margin-top:2rem;">Recent sync jobs</h2>
+<p class="ab-page-desc">История запусков (аналог job history); источник правды — <code>pipeline_run_summary</code>.</p>
+<div class="ab-table-wrap">
+  <table class="ab-table">
+    <thead><tr><th>ID</th><th>Job</th><th>Status</th><th>Started</th><th>Run id</th><th></th></tr></thead>
+    <tbody>
+      {% for r in recent_runs %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td>{{ r.job_name }}</td>
+        <td><span class="ab-badge {% if r.status == 'success' %}ab-badge-success{% elif r.status == 'failed' %}ab-badge-error{% else %}ab-badge-muted{% endif %}">{{ r.status }}</span></td>
+        <td>{{ r.started_at or "—" }}</td>
+        <td><small>{{ r.dagster_run_id or "—" }}</small></td>
+        <td><a href="/app/runs/{{ r.id }}">Details</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

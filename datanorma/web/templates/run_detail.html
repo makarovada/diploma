@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Run {{ row.id }}{% endblock %}
+{% block main %}
+<h1>Детали запуска #{{ row.id }}</h1>
+<pre>{{ row_json }}</pre>
+<p><a href="/app/runs">← К списку</a></p>
+{% endblock %}

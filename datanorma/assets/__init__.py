@@ -1,1 +1,1 @@
-"""Dagster assets: raw → normalized → warehouse."""
+"""Dagster assets: raw → staging (PostgreSQL) → normalized → warehouse."""

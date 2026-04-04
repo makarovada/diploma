@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Destinations — DataNorma{% endblock %}
+{% block main %}
+<h1 class="ab-page-title">Destinations</h1>
+<p class="ab-page-desc">Назначения данных (как <strong>Destinations</strong> в Airbyte). В прототипе одно назначение — <strong>PostgreSQL</strong> с витриной и staging-слоями.</p>
+
+<div class="ab-card ab-conn-card">
+  <span class="ab-badge ab-badge-success">PostgreSQL</span>
+  <h3>Warehouse (analytics)</h3>
+  <p class="ab-conn-meta">Таблица витрины: <code>{{ warehouse_table }}</code></p>
+  <p class="ab-conn-meta">Строк в витрине: <strong>{{ warehouse_rows }}</strong></p>
+  <p class="ab-conn-meta">Дополнительно: <code>raw_ozon_staging</code>, <code>raw_1c_staging</code>, <code>raw_sheet_staging</code>, служебные таблицы (sync_state, …).</p>
+</div>
+
+<div class="ab-callout">
+  Строка подключения задаётся через <code>DATABASE_URL</code> (не показывается в UI). В Airbyte destination connector настраивает хост, схему и credentials; здесь — тот же смысл на уровне env / Docker.
+</div>
+
+<p>
+  <a class="ab-btn ab-btn-secondary" href="/app/warehouse/sales">Browse streams (table)</a>
+  <a class="ab-btn ab-btn-secondary" href="/app/integrations/secrets" style="margin-left:0.5rem;">Secrets &amp; config</a>
+</p>
+{% endblock %}
