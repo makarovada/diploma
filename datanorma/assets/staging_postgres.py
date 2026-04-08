@@ -11,7 +11,8 @@ from datanorma.warehouse.raw_staging import load_raw_to_staging
 @dg.asset(
     group_name="staging",
     compute_kind="postgres",
-    description="Сырой слой в БД: raw_ozon_staging / raw_1c_staging / raw_sheet_staging и sync_state.",
+    description="Сырой слой в БД: raw_<source>_<stream>_staging с _airbyte_* мета-колонками и sync_state (Airbyte-style).",
+    retry_policy=dg.RetryPolicy(max_retries=2, delay=5),
 )
 def staging_raw_postgres(
     raw_ozon_postings: dict,

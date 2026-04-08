@@ -22,10 +22,20 @@ dependencies = [
     "pyjwt>=2.9.0",
     "jinja2>=3.1.0",
     "python-multipart>=0.0.9",
+    "pydantic-settings>=2.0.0",
+    "dbt-core>=1.7.0,<2",
+    "dbt-postgres>=1.7.0,<2",
+    "dagster-dbt>=0.25.0",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = [
+    "pytest>=8.0",
+]
+# Тяжёлая цепочка зависимостей — только когда нужны рантайм-утилиты CDK рядом с проектом.
+dev-airbyte = [
+    "airbyte-cdk>=6.0.0",
+]
 
 [tool.setuptools.package-data]
 datanorma = ["schemas/*.yaml"]

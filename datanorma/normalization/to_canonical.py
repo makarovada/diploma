@@ -2,21 +2,18 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from datanorma.config import get_settings
 from datanorma.normalization.enrich import enrich_canonical_rows
-
-_PACKAGE_DIR = Path(__file__).resolve().parent.parent
-_DEFAULT_MAPPINGS = _PACKAGE_DIR / "schemas" / "source_mappings.yaml"
 
 
 def load_source_mappings() -> dict[str, Any]:
-    path = Path(os.environ.get("DATANORMA_SOURCE_MAPPINGS_PATH", "").strip() or _DEFAULT_MAPPINGS)
+    path = get_settings().resolved_source_mappings_path()
     if not path.is_file():
         raise FileNotFoundError(
             f"Файл маппинга не найден: {path}. Задайте DATANORMA_SOURCE_MAPPINGS_PATH или восстановите schemas/source_mappings.yaml."
@@ -176,6 +173,8 @@ def build_canonical_sales_rows(
     raw_1c: dict[str, Any],
     raw_google: dict[str, Any],
     mappings: dict[str, Any] | None = None,
+    *,
+    batch_extracted_at: str | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     mappings = mappings or load_source_mappings()
     sources_cfg = mappings.get("sources") or {}
@@ -226,5 +225,9 @@ def build_canonical_sales_rows(
 
     deduped, enrich_meta = enrich_canonical_rows(deduped)
     stats["enrich"] = enrich_meta
+
+    if batch_extracted_at:
+        for r in deduped:
+            r.setdefault("_airbyte_extracted_at", batch_extracted_at)
 
     return deduped, stats

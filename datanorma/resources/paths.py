@@ -1,16 +1,13 @@
-import os
 from pathlib import Path
 
 from dagster import ConfigurableResource
 from pydantic import Field
 
+from datanorma.config import get_settings
+
 
 def _default_repo_root() -> str:
-    env = os.environ.get("DATANORMA_REPO_ROOT", "").strip()
-    if env:
-        return env
-    # datanorma/resources/paths.py -> parents[2] = корень репозитория при editable install
-    return str(Path(__file__).resolve().parents[2])
+    return str(get_settings().resolved_repo_root())
 
 
 class DataPathsResource(ConfigurableResource):

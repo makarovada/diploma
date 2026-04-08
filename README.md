@@ -2,6 +2,14 @@
 
 Конфигурируемый прототип интеграции и нормализации данных для МСБ (оркестрация: **Dagster**).
 
+## Сравнение с Airbyte
+
+Веб-консоль и смысловые блоки (Sources, Destinations, Connections, sync history и т.д.) сознательно согласованы с продуктовой логикой **[Airbyte](https://airbyte.com)** (open-source EL/ELT), но оркестрация и нормализация реализованы на **Dagster** и собственном Python/YAML-слое. Развёрнутая таблица соответствий и отличий: **[docs/comparison_airbyte.md](docs/comparison_airbyte.md)**.
+
+- Централизованные пути и переменные окружения: **`datanorma/config.py`** (`pydantic-settings`, при необходимости читает `.env`).
+- Базовые типы **Airbyte Protocol** (Record, State, Catalog, Stream …): **`datanorma/core/airbyte_protocol.py`**.
+- Dev-зависимости: `pip install -e ".[dev]"` (в т.ч. `dbt-postgres`). Пакет **Airbyte CDK** при необходимости: `pip install -e ".[dev-airbyte]"`.
+
 ## Для кого и что это
 
 Сервис **не привязан к одной гипотетической компании**: смысл в том, что данные **вашей** организации (или песочные примеры) проходят через одни и те же коннекторы, а различия в колонках и форматах задаются **конфигом маппинга** (`datanorma/schemas/source_mappings.yaml` или `DATANORMA_SOURCE_MAPPINGS_PATH`). Логическая цель — единая **каноническая модель** продаж (`datanorma/schemas/canonical_sales.yaml`), с которой удобно работать аналитику в SQL/BI после загрузки в warehouse.
@@ -72,12 +80,16 @@ python scripts/seed_database.py
 
 Переменная **`DATABASE_URL`** — как у Dagster (см. `.env.example`).
 
+Если при материализации **`sync_catalog`** в Dagster ошибка **`column "stream_name" does not exist`**: схема БД старая, не накатили Phase 1. В каталоге проекта выполните **`alembic upgrade head`** с **тем же** `DATABASE_URL`, что видит Dagster (часто сбой из‑за порта **5432** локального Postgres вместо **5433** из `docker-compose`). Проверка: `alembic current` должно показывать ревизию **`002_phase1_airbyte`**.
+
 ## Фаза B: raw в PostgreSQL (staging)
 
 После фазы А пайплайн фиксирует сырой слой в БД до нормализации (аналог **landing / raw** в medallion или буфера в ELT):
 
-- Asset **`staging_raw_postgres`** (`datanorma/assets/staging_postgres.py`) пишет в **`raw_ozon_staging`** (по одной строке на отправление), **`raw_1c_staging`** и **`raw_sheet_staging`** (по строке выгрузки), в одном прогоне используется общий **`ingest_batch_id`** (UUID).
-- В **`sync_state`** обновляются курсоры для кодов `ozon`, `1c`, `google_sheet` (JSON с `batch_id`, режимом ingest и числом строк).
+- Asset **`sync_catalog`** читает **`sync_state`** и YAML до raw-слоя; raw-ассеты поддерживают **`full_refresh`** / **`incremental`** (поля `sync_mode`, `cursor_field` в `source_mappings.yaml`).
+- Asset **`staging_raw_postgres`** пишет в **`raw_ozon_postings_staging`**, **`raw_1c_orders_staging`**, **`raw_google_sheet_orders_staging`** с мета-колонками **`_airbyte_raw_id`**, **`_airbyte_extracted_at`**, **`_airbyte_meta`**; общий **`ingest_batch_id`** (UUID).
+- **`sync_state`**: строка на пару `(integration_code, stream_name)` + **`airbyte_state`** (JSON), **`cursor_field`**, режим синхронизации.
+- Витрина: колонка **`_airbyte_loaded_at`**, UPSERT обновляет строку только если новое значение не старее (инкрементальная логика по времени загрузки).
 - **`normalized_orders`** зависит от `staging_raw_postgres`, поэтому порядок материализации: raw → staging → каноника → warehouse.
 
 Логика вставок: `datanorma/warehouse/raw_staging.py`. Нужны применённые миграции Alembic (таблицы staging).
@@ -122,6 +134,15 @@ python scripts/seed_database.py
 - **Unit-тесты:** каталог `tests/` — нормализация, ЦБ (в т.ч. `Nominal`), fuzzy, enrich с моком, warehouse, **дедуп и склейка трёх источников** (`test_pipeline_stage5.py`). Запуск: `pytest tests/ -q` (нужен `pip install -e ".[dev]"`).
 - **Asset checks (Dagster):** модуль `datanorma/checks/data_quality.py` — проверки staging (хотя бы одна запись raw в БД), непустой `normalized_orders` и запись в warehouse. Статус WARN при пустых данных (удобно для демо без Postgres или без материализации).
 
+## Этап 6 (опционально): мультитенантность и deployment polish
+
+- Базовая модель **organization/workspace** + привязка пользователей (`organization`, `workspace`, `user_workspace`), миграция `004_phase3_multitenancy`.
+- API для workspaces: `GET/POST /api/v1/workspaces`.
+- Личный кабинет аналитика: `/app/analyst/cabinet`.
+- Контейнеризация: `Dockerfile` в корне.
+- Kubernetes-скелет: `helm/` (Chart, values, deployment/service templates).
+- Гайд по подключению российского коннектора: `docs/adding_russian_connector.md`.
+
 Переопределение URL БД: переменная окружения `DATABASE_URL` (см. `.env.example`).
 
 ### Если падает `warehouse_sales` (PostgreSQL)
@@ -143,3 +164,18 @@ docker compose -f c:\dev\diploma\diploma\docker-compose.yml exec postgres psql -
 - **Telemetry** — сбор анонимной статистики; отключение: в `%DAGSTER_HOME%\dagster.yaml` добавить `telemetry: { enabled: false }`.
 - **Compute log capture is disabled (Windows)** — логи выполнения шагов в UI могут быть пустыми. Чтобы включить захват, перед запуском задайте `PYTHONLEGACYWINDOWSSTDIO=1` (в PowerShell: `$env:PYTHONLEGACYWINDOWSSTDIO="1"`).
 - Строка про **daemons** и **Serving dagster-webserver on http://127.0.0.1:3000** означает, что всё поднялось успешно.
+
+### Сравнение с Airbyte
+|Категория|Что есть в Airbyte|Что есть у тебя|Что не хватает (приоритет для диплома)|
+|---------|------------------|---------------|--------------------------------------|
+|Коннекторы|600+ любых|3 специфических (Ozon/1C/Google Sheets)|"Универсальный механизм коннекторов + Connector Builder / CDK. Сейчас всё ""вшито"" в Dagster assets."|
+|Схема и discovery|Автоматический discover() + JSON Schema|Жёсткие YAML-маппинги|Автоматическое обнаружение схемы источников (чтобы не писать маппинг вручную каждый раз)|
+|Режимы синхронизации|Full / Incremental / CDC + state|Только full (судя по коду и сэмплам)|Incremental + state management (чтобы не переливать всё каждый день)|
+|Нормализация|Typing + Deduping (TyD) + dbt (generic + typed columns)|"Кастомная бизнес-нормализация (валюты, даты, fuzzy, units)"|1) Генерация typed columns по схеме (как TyD). 2) Поддержка dbt / SQL-трансформаций после загрузки. 3) Raw-таблицы + _airbyte_meta для ошибок.|
+|Назначения|Много (warehouse + lakes + DB)|Только один Postgres-warehouse + фиксированная canonical_sales|Несколько destinations + выбор (или хотя бы абстракция).|
+|UI / UX|Полноценный no-code builder соединений|"20+ экранов FastAPI+Jinja (хорошо, но проще)"|Визуальный конструктор Connections (drag-and-drop streams/fields).|
+|Оркестрация|Собственный движок + Temporal + Workloads|Dagster (отлично!)|— (Dagster даже лучше для сложных пайплайнов)|
+|Мониторинг / Надёжность|"Retries, resumability, per-row errors, alerts"|Dagster logs + asset checks|"Автоматические retries, resumable syncs, обработка schema changes."
+|API / Extensibility|Полный REST API + protocol|Внутренний FastAPI + RBAC|Публичный API для внешних систем + возможность добавлять коннекторы без изменения кода.|
+|Мультитенантность|Workspaces + Organizations|Однотенант (по README)|Хотя бы базовая мультитенантность (компании/проекты)|
+|Дополнительно|"File syncing, breaking change protection, unstructured data"|—|"Поддержка файлов (не только таблицы), защита от breaking changes."|

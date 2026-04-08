@@ -18,6 +18,7 @@ from datanorma.web.sql_util import warehouse_table_sql
 from datanorma.web.users_repo import list_roles, list_users_with_roles, load_user_by_username
 
 router = APIRouter(tags=["api"])
+v1 = APIRouter(prefix="/v1", tags=["api-v1"])
 
 
 class LoginBody(BaseModel):
@@ -88,10 +89,14 @@ def data_staging_counts(
     _: Annotated[AuthUser, Depends(require_operation("view_staging_counts"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
-    oz = int(conn.execute(text("SELECT COUNT(*) FROM raw_ozon_staging")).scalar_one())
-    c1 = int(conn.execute(text("SELECT COUNT(*) FROM raw_1c_staging")).scalar_one())
-    sh = int(conn.execute(text("SELECT COUNT(*) FROM raw_sheet_staging")).scalar_one())
-    return {"raw_ozon_staging": oz, "raw_1c_staging": c1, "raw_sheet_staging": sh}
+    oz = int(conn.execute(text("SELECT COUNT(*) FROM raw_ozon_postings_staging")).scalar_one())
+    c1 = int(conn.execute(text("SELECT COUNT(*) FROM raw_1c_orders_staging")).scalar_one())
+    sh = int(conn.execute(text("SELECT COUNT(*) FROM raw_google_sheet_orders_staging")).scalar_one())
+    return {
+        "raw_ozon_postings_staging": oz,
+        "raw_1c_orders_staging": c1,
+        "raw_google_sheet_orders_staging": sh,
+    }
 
 
 @router.get("/data/staging-ozon-sample")
@@ -103,8 +108,8 @@ def data_staging_ozon(
     lim = max(1, min(limit, 50))
     rows = conn.execute(
         text(
-            "SELECT id, ingest_batch_id, ingested_at, payload_json FROM raw_ozon_staging "
-            "ORDER BY id DESC LIMIT :lim"
+            "SELECT id, ingest_batch_id, ingested_at, _airbyte_extracted_at, _airbyte_meta, payload_json "
+            "FROM raw_ozon_postings_staging ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim},
     ).mappings().all()
@@ -120,8 +125,8 @@ def data_staging_1c(
     lim = max(1, min(limit, 50))
     rows = conn.execute(
         text(
-            "SELECT id, ingest_batch_id, ingested_at, row_json FROM raw_1c_staging "
-            "ORDER BY id DESC LIMIT :lim"
+            "SELECT id, ingest_batch_id, ingested_at, _airbyte_extracted_at, _airbyte_meta, row_json "
+            "FROM raw_1c_orders_staging ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim},
     ).mappings().all()
@@ -137,8 +142,8 @@ def data_staging_sheet(
     lim = max(1, min(limit, 50))
     rows = conn.execute(
         text(
-            "SELECT id, ingest_batch_id, ingested_at, row_json FROM raw_sheet_staging "
-            "ORDER BY id DESC LIMIT :lim"
+            "SELECT id, ingest_batch_id, ingested_at, _airbyte_extracted_at, _airbyte_meta, row_json "
+            "FROM raw_google_sheet_orders_staging ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim},
     ).mappings().all()
@@ -151,7 +156,11 @@ def data_sync_state(
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     rows = conn.execute(
-        text("SELECT id, integration_code, cursor_value, last_success_at, updated_at FROM sync_state ORDER BY id")
+        text(
+            "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
+            "airbyte_state, last_success_at, updated_at FROM sync_state "
+            "ORDER BY integration_code, stream_name"
+        )
     ).mappings().all()
     return {"rows": [dict(r) for r in rows]}
 
@@ -298,3 +307,149 @@ def export_sales_csv(
         {"lim": lim},
     ).mappings().all()
     return {"rows": [dict(r) for r in rows], "format": "array_for_client_csv"}
+
+
+class ConnectionUpsertBody(BaseModel):
+    integration_code: str = Field(min_length=1, max_length=64)
+    stream_name: str = Field(min_length=1, max_length=128)
+    sync_mode: str = Field(default="full_refresh", pattern="^(full_refresh|incremental)$")
+    cursor_field: str | None = None
+
+
+class SyncTriggerBody(BaseModel):
+    integration_code: str | None = Field(default=None, max_length=64)
+    stream_name: str | None = Field(default=None, max_length=128)
+    note: str | None = Field(default=None, max_length=512)
+
+
+class WorkspaceCreateBody(BaseModel):
+    org_code: str = Field(min_length=1, max_length=64)
+    org_name: str = Field(min_length=1, max_length=255)
+    workspace_code: str = Field(min_length=1, max_length=64)
+    workspace_name: str = Field(min_length=1, max_length=255)
+
+
+@v1.get("/connections")
+def v1_connections_list(
+    _: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    rows = conn.execute(
+        text(
+            "SELECT integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
+            "last_success_at, updated_at FROM sync_state ORDER BY integration_code, stream_name"
+        )
+    ).mappings().all()
+    return {"items": [dict(r) for r in rows]}
+
+
+@v1.post("/connections")
+def v1_connections_upsert(
+    body: ConnectionUpsertBody,
+    _: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    cv = '{"cursor": null, "edited_via": "api_v1_connections"}'
+    ajs = '{"cursor": null, "rows_emitted": 0, "edited_via": "api_v1_connections"}'
+    conn.execute(
+        text(
+            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, airbyte_state, last_success_at, updated_at) "
+            "VALUES (:ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
+            "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
+            "sync_mode = EXCLUDED.sync_mode, cursor_field = EXCLUDED.cursor_field, updated_at = NOW()"
+        ),
+        {
+            "ic": body.integration_code.strip(),
+            "sn": body.stream_name.strip(),
+            "sm": body.sync_mode.strip(),
+            "cf": (body.cursor_field or "").strip() or None,
+            "cv": cv,
+            "ajs": ajs,
+        },
+    )
+    return {"status": "ok", "integration_code": body.integration_code, "stream_name": body.stream_name}
+
+
+@v1.get("/syncs")
+def v1_syncs_list(
+    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    limit: int = 50,
+) -> dict[str, Any]:
+    lim = max(1, min(limit, 500))
+    rows = conn.execute(
+        text(
+            "SELECT id, dagster_run_id, job_name, status, started_at, finished_at, meta "
+            "FROM pipeline_run_summary ORDER BY id DESC LIMIT :lim"
+        ),
+        {"lim": lim},
+    ).mappings().all()
+    return {"items": [dict(r) for r in rows]}
+
+
+@v1.post("/syncs/trigger")
+def v1_sync_trigger(
+    body: SyncTriggerBody,
+    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+) -> dict[str, Any]:
+    # MVP: декларативная точка для внешнего оркестратора/UI; фактический запуск выполняется Dagster UI/CLI.
+    return {
+        "status": "accepted",
+        "note": "Trigger endpoint is declarative in prototype. Use Dagster run launch for execution.",
+        "payload": body.model_dump(),
+    }
+
+
+@v1.get("/workspaces")
+def v1_workspaces_list(
+    _: Annotated[AuthUser, Depends(require_operation("view_workspaces"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    rows = conn.execute(
+        text(
+            "SELECT o.code AS org_code, o.name AS org_name, w.code AS workspace_code, w.name AS workspace_name "
+            "FROM workspace w JOIN organization o ON o.id = w.organization_id "
+            "ORDER BY o.code, w.code"
+        )
+    ).mappings().all()
+    return {"items": [dict(r) for r in rows]}
+
+
+@v1.post("/workspaces")
+def v1_workspaces_create(
+    body: WorkspaceCreateBody,
+    user: Annotated[AuthUser, Depends(require_operation("manage_workspaces"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    org_code = body.org_code.strip()
+    ws_code = body.workspace_code.strip()
+    conn.execute(
+        text(
+            "INSERT INTO organization(code, name) VALUES (:c, :n) "
+            "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name"
+        ),
+        {"c": org_code, "n": body.org_name.strip()},
+    )
+    conn.execute(
+        text(
+            "INSERT INTO workspace(organization_id, code, name) "
+            "SELECT o.id, :wc, :wn FROM organization o WHERE o.code = :oc "
+            "ON CONFLICT ON CONSTRAINT uq_workspace_org_code DO UPDATE SET name = EXCLUDED.name"
+        ),
+        {"oc": org_code, "wc": ws_code, "wn": body.workspace_name.strip()},
+    )
+    conn.execute(
+        text(
+            "INSERT INTO user_workspace(user_id, workspace_id) "
+            "SELECT u.id, w.id FROM app_user u "
+            "JOIN workspace w ON w.code = :wc "
+            "JOIN organization o ON o.id = w.organization_id AND o.code = :oc "
+            "WHERE u.username = :un "
+            "ON CONFLICT (user_id, workspace_id) DO NOTHING"
+        ),
+        {"wc": ws_code, "oc": org_code, "un": user.username},
+    )
+    return {"status": "ok", "org_code": org_code, "workspace_code": ws_code}
+
+
+router.include_router(v1)

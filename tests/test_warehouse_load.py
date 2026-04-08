@@ -46,3 +46,4 @@ def test_row_to_payload_maps_fields() -> None:
     assert p["source_system"] == "ozon"
     assert p["amount_rub"] == 10.5
     assert p["currency_code"] == "RUB"
+    assert p["_airbyte_loaded_at"] == now

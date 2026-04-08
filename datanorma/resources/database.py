@@ -1,17 +1,17 @@
-import os
-
 from dagster import ConfigurableResource
 from pydantic import Field
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
-_DEFAULT_LOCAL_URL = (
-    "postgresql+psycopg://datanorma:datanorma@127.0.0.1:5433/datanorma"
-)
+from datanorma.config import DEFAULT_DATABASE_URL, get_settings
 
 
 def _connection_url_default() -> str:
-    return os.environ.get("DATABASE_URL", _DEFAULT_LOCAL_URL)
+    return get_settings().database_url
+
+
+# Обратная совместимость для скриптов/тестов, импортирующих константу.
+_DEFAULT_LOCAL_URL = DEFAULT_DATABASE_URL
 
 
 class PostgresResource(ConfigurableResource):

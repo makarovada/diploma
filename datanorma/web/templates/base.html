@@ -22,7 +22,7 @@
       {% for group in nav_groups %}
       <div class="ab-nav-group">
         <div class="ab-nav-title">{{ group.title }}</div>
-        {% for item in group.items %}
+        {% for item in group["items"] %}
         <a href="{{ item.href }}" class="{% if item.allowed %}ab-nav-ok{% else %}ab-nav-dis{% endif %}" {% if not item.allowed %}title="No access for this role"{% endif %}>{{ item.label }}</a>
         {% endfor %}
       </div>
@@ -33,5 +33,6 @@
   <main class="ab-main">
     {% block main %}{% endblock %}
   </main>
+  {% block extra_js %}{% endblock %}
 </body>
 </html>

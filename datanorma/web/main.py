@@ -45,6 +45,7 @@ def create_app() -> FastAPI:
         if exc.status_code == 403 and request.url.path.startswith("/app/"):
             detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
             return jinja_templates.TemplateResponse(
+                request,
                 "forbidden.html",
                 {"request": request, "detail": detail, "nav": []},
                 status_code=403,

@@ -2,6 +2,8 @@
 
 Уникальные пути (для приложения к ВКР и подсчёта «экранов»). Часть маршрутов — POST (формы).
 
+Переменные окружения и пути для веб-слоя и пайплайна — **`datanorma/config.py`** (`Settings`). Сравнение с Airbyte — **[comparison_airbyte.md](comparison_airbyte.md)**.
+
 **Терминология UI** в духе [Airbyte](https://airbyte.com): **Sources**, **Destinations**, **Connections**, sync history, secrets, replication schedule; оркестрация вынесена в **Dagster** (`/app/external/dagster`).
 
 | Маршрут | Назначение |

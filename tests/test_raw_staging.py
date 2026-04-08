@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from datanorma.warehouse.raw_staging import load_raw_to_staging
 
 
-def test_load_raw_to_staging_execute_count() -> None:
+@patch("datanorma.warehouse.raw_staging.ensure_phase1_schema")
+def test_load_raw_to_staging_execute_count(_schema: MagicMock) -> None:
     conn = MagicMock()
 
     @contextmanager

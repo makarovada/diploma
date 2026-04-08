@@ -1,0 +1,14 @@
+image:
+  repository: datanorma
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8000
+
+env:
+  DATABASE_URL: "postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma"
+  DATANORMA_DAGSTER_UI_URL: "http://dagster:3000"
+
+resources: {}

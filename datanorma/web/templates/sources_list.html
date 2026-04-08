@@ -3,6 +3,9 @@
 {% block main %}
 <h1 class="ab-page-title">Sources</h1>
 <p class="ab-page-desc">Каталог источников (как <strong>Sources</strong> в Airbyte): коннекторы и привязка к <code>sync_state</code>.</p>
+{% if can_configure_new_source %}
+<p><a href="/app/sources/new" class="ab-btn ab-btn-primary">New Source</a></p>
+{% endif %}
 <h2 class="ab-page-title" style="font-size:1rem;">Catalog</h2>
 <table class="data-table"><thead><tr><th>Connector</th><th>Name</th><th></th></tr></thead>
 <tbody>
@@ -11,10 +14,10 @@
 {% endfor %}
 </tbody></table>
 <h2 class="ab-page-title" style="font-size:1rem;margin-top:1.5rem;">Sync state (cursors)</h2>
-<table class="data-table"><thead><tr><th>Integration</th><th>Cursor</th><th>Last success</th></tr></thead>
+<table class="data-table"><thead><tr><th>Integration</th><th>Stream</th><th>Mode</th><th>cursor_field</th><th>State / cursor</th><th>Last success</th></tr></thead>
 <tbody>
 {% for r in sync_rows %}
-<tr><td>{{ r.integration_code }}</td><td><pre style="margin:0;white-space:pre-wrap;">{{ r.cursor_value }}</pre></td><td>{{ r.last_success_at }}</td></tr>
+<tr><td>{{ r.integration_code }}</td><td>{{ r.stream_name }}</td><td>{{ r.sync_mode }}</td><td>{{ r.cursor_field or "—" }}</td><td><pre style="margin:0;white-space:pre-wrap;">{{ r.cursor_value }}</pre></td><td>{{ r.last_success_at }}</td></tr>
 {% endfor %}
 </tbody></table>
 {% endblock %}

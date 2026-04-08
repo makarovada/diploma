@@ -1,11 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Sample{% endblock %}
 {% block main %}
-<h1>Предпросмотр sample</h1>
-<p class="meta">Каталог: <code>{{ samples_dir }}</code></p>
-<h2>Файлы</h2>
+<h1 class="ab-page-title">Sample Records Preview</h1>
+<p class="ab-page-desc">Просмотр sample-данных для no-code настройки источников и connections.</p>
+<p class="ab-page-desc">Каталог: <code>{{ samples_dir }}</code></p>
+
+{% if files %}
+<h2 class="ab-page-title" style="font-size:1rem;">Files</h2>
 <ul>{% for f in files %}<li>{{ f.name }} ({{ f.size }} байт)</li>{% endfor %}</ul>
-<h2>Первые строки 1c_export.csv</h2>
+{% endif %}
+
+{% if preview_lines %}
+<h2 class="ab-page-title" style="font-size:1rem;">Первые строки 1c_export.csv</h2>
 <pre>{% for line in preview_lines %}{{ line }}
 {% endfor %}</pre>
+{% endif %}
+
+{% if sample_blocks %}
+<h2 class="ab-page-title" style="font-size:1rem;">Records (JSON)</h2>
+{% for b in sample_blocks %}
+<pre style="white-space:pre-wrap;">{{ b }}</pre>
+{% endfor %}
+{% endif %}
 {% endblock %}

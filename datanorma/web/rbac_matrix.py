@@ -27,6 +27,7 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "edit_mapping_profiles": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     # Справочники (чтение для аналитика)
     "view_dim_sources": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
+    "configure_new_source": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_dim_currencies": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
     # Администрирование
     "view_admin_users": (ROLE_PLATFORM_ADMIN,),
@@ -44,7 +45,14 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "edit_schedule_cron": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     # Веб-консоль (ориентир Airbyte: Connections / Destinations)
     "view_connections_overview": ALL_ROLES,
+    "edit_connections_builder": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_destinations_page": ALL_ROLES,
+    # API v1: orchestration and sync management
+    "manage_connections_api": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
+    "manage_syncs_api": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
+    "view_workspaces": ALL_ROLES,
+    "manage_workspaces": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
+    "view_analyst_cabinet": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
 }
 
 # Человекочитаемые подписи для таблицы в UI / ВКР.
@@ -61,6 +69,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "view_mapping_profiles": "Профили mapping_profile",
     "edit_mapping_profiles": "Изменение профилей маппинга (заглушка API)",
     "view_dim_sources": "Справочник источников (dim_source_system)",
+    "configure_new_source": "Мастер New Source (check / discover коннектора)",
     "view_dim_currencies": "Справочник валют (dim_currency)",
     "view_admin_users": "Список пользователей и ролей",
     "view_admin_roles": "Список ролей",
@@ -75,7 +84,13 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "assign_user_roles": "Назначение ролей пользователю",
     "edit_schedule_cron": "Настройка cron расписания (текстом)",
     "view_connections_overview": "Обзор подключений (как Connections в Airbyte)",
+    "edit_connections_builder": "No-code редактор Connections (stream/sync/cursor)",
     "view_destinations_page": "Назначения данных / warehouse (как Destinations)",
+    "manage_connections_api": "API v1: управление connections",
+    "manage_syncs_api": "API v1: управление/просмотр sync jobs",
+    "view_workspaces": "Просмотр organizations/workspaces",
+    "manage_workspaces": "Управление organizations/workspaces",
+    "view_analyst_cabinet": "Личный кабинет аналитика",
 }
 
 

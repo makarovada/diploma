@@ -5,10 +5,11 @@ from __future__ import annotations
 from datetime import date, datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
+from datanorma.config import get_settings
 from datanorma.warehouse.tables import canonical_sales_table
 
 
@@ -55,6 +56,7 @@ def _row_to_payload(row: dict[str, Any], loaded_at: datetime) -> dict[str, Any] 
     sid = str(sid).strip()
     if not ss or not sid:
         return None
+    air_at = _parse_ts(row.get("_airbyte_extracted_at")) or loaded_at
     return {
         "source_system": ss,
         "source_record_id": sid,
@@ -72,6 +74,7 @@ def _row_to_payload(row: dict[str, Any], loaded_at: datetime) -> dict[str, Any] 
         ),
         "normalization_meta": row.get("normalization_meta"),
         "loaded_at": loaded_at,
+        "_airbyte_loaded_at": air_at,
     }
 
 
@@ -93,11 +96,7 @@ def load_canonical_sales_to_postgres(
     key_cols = ("source_system", "source_record_id")
     update_cols = [c.name for c in table.columns if c.name not in key_cols]
 
-    auto_ddl = __import__("os").environ.get("DATANORMA_AUTO_CREATE_TABLES", "").strip() in (
-        "1",
-        "true",
-        "yes",
-    )
+    auto_ddl = get_settings().warehouse_auto_ddl_enabled()
 
     with engine.begin() as conn:
         if auto_ddl:
@@ -108,10 +107,17 @@ def load_canonical_sales_to_postgres(
             if not chunk:
                 continue
             stmt = pg_insert(table).values(chunk)
-            set_map = {col: getattr(stmt.excluded, col) for col in update_cols}
+            excluded = stmt.excluded
+            set_map = {col: getattr(excluded, col) for col in update_cols}
+            incremental_where = or_(
+                table.c._airbyte_loaded_at.is_(None),
+                excluded._airbyte_loaded_at.is_(None),
+                excluded._airbyte_loaded_at >= table.c._airbyte_loaded_at,
+            )
             stmt = stmt.on_conflict_do_update(
                 index_elements=list(key_cols),
                 set_=set_map,
+                where=incremental_where,
             )
             conn.execute(stmt)
 

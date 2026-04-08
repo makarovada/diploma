@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Workspaces — DataNorma{% endblock %}
+{% block main %}
+<h1 class="ab-page-title">Organizations & Workspaces</h1>
+<p class="ab-page-desc">Мультитенантная модель в стиле Airbyte: Organization содержит Workspace.</p>
+{% if can_manage %}
+<p class="ab-page-desc">Управление доступно через API: <code>/api/v1/workspaces</code>.</p>
+{% endif %}
+<div class="ab-table-wrap">
+  <table class="ab-table">
+    <thead><tr><th>Organization</th><th>Workspace</th><th>Code</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ r.org_name }}</td>
+        <td>{{ r.workspace_name }}</td>
+        <td><code>{{ r.org_code }}/{{ r.workspace_code }}</code></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

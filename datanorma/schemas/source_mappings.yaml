@@ -11,9 +11,14 @@ options:
 sources:
   ozon:
     handler: ozon_fbs_postings
+    stream: postings
+    sync_mode: incremental
+    cursor_field: posting_number
   "1c":
     fuzzy_column_threshold: 85
     handler: column_map
+    stream: orders
+    sync_mode: full_refresh
     fields:
       ДатаДокумента: event_datetime
       Номер: source_record_id
@@ -23,6 +28,9 @@ sources:
       Комментарий: line_description
   google_sheet:
     handler: column_map
+    stream: orders
+    sync_mode: incremental
+    cursor_field: order_id
     fields:
       order_id: source_record_id
       order_date: event_datetime

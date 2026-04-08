@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import os
+from datanorma.config import get_settings
 
 from sqlalchemy import Column, Date, DateTime, MetaData, Numeric, PrimaryKeyConstraint, String, Table, Text
 from sqlalchemy.dialects.postgresql import JSONB
@@ -11,7 +11,7 @@ metadata = MetaData()
 
 
 def canonical_sales_table(name: str | None = None) -> Table:
-    tname = name or os.environ.get("DATANORMA_WAREHOUSE_TABLE", "canonical_sales").strip() or "canonical_sales"
+    tname = name or get_settings().datanorma_warehouse_table.strip() or "canonical_sales"
     key = tname
     if key in metadata.tables:
         return metadata.tables[key]
@@ -32,5 +32,6 @@ def canonical_sales_table(name: str | None = None) -> Table:
         Column("line_unit_normalized", String(64)),
         Column("normalization_meta", JSONB),
         Column("loaded_at", DateTime(timezone=True), nullable=False),
+        Column("_airbyte_loaded_at", DateTime(timezone=True), nullable=True),
         PrimaryKeyConstraint("source_system", "source_record_id"),
     )

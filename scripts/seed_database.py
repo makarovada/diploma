@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
@@ -17,13 +16,13 @@ from decimal import Decimal
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
-from datanorma.resources.database import _DEFAULT_LOCAL_URL  # noqa: SLF001
+from datanorma.config import get_settings
 
 _BATCH = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-000000000001")
 
 
 def _url() -> str:
-    return os.environ.get("DATABASE_URL", "").strip() or _DEFAULT_LOCAL_URL
+    return get_settings().database_url
 
 
 def _ph(text_pw: str) -> str:
@@ -39,9 +38,11 @@ def _clear_seed_rows(conn: Connection) -> None:
     conn.execute(text("DELETE FROM sync_state WHERE integration_code LIKE 'seed_%'"))
     conn.execute(text("DELETE FROM mapping_profile WHERE name LIKE 'Seed %'"))
     conn.execute(text("DELETE FROM integration_config WHERE config_key LIKE 'seed.%'"))
-    conn.execute(text("DELETE FROM raw_sheet_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH})
-    conn.execute(text("DELETE FROM raw_1c_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH})
-    conn.execute(text("DELETE FROM raw_ozon_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH})
+    conn.execute(
+        text("DELETE FROM raw_google_sheet_orders_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH}
+    )
+    conn.execute(text("DELETE FROM raw_1c_orders_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH})
+    conn.execute(text("DELETE FROM raw_ozon_postings_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH})
 
 
 def seed_reference(conn: Connection) -> None:
@@ -171,25 +172,28 @@ def seed_staging_and_issues(conn: Connection) -> None:
     oz = {"posting_number": "SEED-OZ-1", "status": "delivered", "items": [{"sku": "X", "qty": 1}]}
     conn.execute(
         text(
-            "INSERT INTO raw_ozon_staging (ingest_batch_id, payload_json) VALUES (:b, CAST(:j AS jsonb))"
+            "INSERT INTO raw_ozon_postings_staging (ingest_batch_id, payload_json, _airbyte_extracted_at, _airbyte_meta) "
+            "VALUES (:b, CAST(:j AS jsonb), NOW(), CAST(:m AS jsonb))"
         ),
-        {"b": _BATCH, "j": json.dumps(oz)},
+        {"b": _BATCH, "j": json.dumps(oz), "m": json.dumps({"seed": True})},
     )
     for i in range(5):
         row = {"order_id": f"S1C-{i}", "sum": 100 + i}
         conn.execute(
             text(
-                "INSERT INTO raw_1c_staging (ingest_batch_id, row_json) VALUES (:b, CAST(:j AS jsonb))"
+                "INSERT INTO raw_1c_orders_staging (ingest_batch_id, row_json, _airbyte_extracted_at, _airbyte_meta) "
+                "VALUES (:b, CAST(:j AS jsonb), NOW(), CAST(:m AS jsonb))"
             ),
-            {"b": _BATCH, "j": json.dumps(row)},
+            {"b": _BATCH, "j": json.dumps(row), "m": json.dumps({"seed": True})},
         )
     for i in range(5):
         row = {"sheet_row": i, "client": f"Client {i}"}
         conn.execute(
             text(
-                "INSERT INTO raw_sheet_staging (ingest_batch_id, row_json) VALUES (:b, CAST(:j AS jsonb))"
+                "INSERT INTO raw_google_sheet_orders_staging (ingest_batch_id, row_json, _airbyte_extracted_at, _airbyte_meta) "
+                "VALUES (:b, CAST(:j AS jsonb), NOW(), CAST(:m AS jsonb))"
             ),
-            {"b": _BATCH, "j": json.dumps(row)},
+            {"b": _BATCH, "j": json.dumps(row), "m": json.dumps({"seed": True})},
         )
     for i in range(20):
         conn.execute(
@@ -226,9 +230,9 @@ def seed_canonical_bulk(conn: Connection) -> None:
         "INSERT INTO canonical_sales ("
         "source_system, source_record_id, event_datetime, amount, amount_rub, currency_code, "
         "counterparty_name, channel, line_description, status, cbr_rate_date, "
-        "line_unit_normalized, normalization_meta, loaded_at"
+        "line_unit_normalized, normalization_meta, loaded_at, _airbyte_loaded_at"
         ") VALUES ("
-        ":ss, :sid, :ed, :am, :ar, :cc, :cp, :ch, :ld, :st, :cbr, :lu, CAST(:nm AS jsonb), :la)"
+        ":ss, :sid, :ed, :am, :ar, :cc, :cp, :ch, :ld, :st, :cbr, :lu, CAST(:nm AS jsonb), :la, :ala)"
     )
     base_date = date(2024, 6, 1)
     for i in range(520):
@@ -253,6 +257,7 @@ def seed_canonical_bulk(conn: Connection) -> None:
                 "lu": "шт" if i % 3 == 0 else None,
                 "nm": json.dumps(meta),
                 "la": loaded_at,
+                "ala": loaded_at,
             },
         )
 

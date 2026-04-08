@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: datanorma
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: datanorma
+  template:
+    metadata:
+      labels:
+        app: datanorma
+    spec:
+      containers:
+        - name: datanorma
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              value: {{ .Values.env.DATABASE_URL | quote }}
+            - name: DATANORMA_DAGSTER_UI_URL
+              value: {{ .Values.env.DATANORMA_DAGSTER_UI_URL | quote }}

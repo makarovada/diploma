@@ -16,11 +16,13 @@ def normalized_orders(
 ) -> dict:
     _ = staging_raw_postgres
     mappings = load_source_mappings()
+    batch_ts = (staging_raw_postgres or {}).get("batch_extracted_at")
     rows, stats = build_canonical_sales_rows(
         raw_ozon_postings,
         raw_1c_orders,
         raw_google_sheet_orders,
         mappings=mappings,
+        batch_extracted_at=batch_ts,
     )
     return {
         "canonical_schema": mappings.get("canonical"),

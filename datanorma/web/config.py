@@ -2,25 +2,21 @@
 
 from __future__ import annotations
 
-import os
-
-from datanorma.resources.database import _DEFAULT_LOCAL_URL  # noqa: SLF001
+from datanorma.config import get_settings
 
 
 def database_url() -> str:
-    return os.environ.get("DATABASE_URL", "").strip() or _DEFAULT_LOCAL_URL
+    return get_settings().database_url
 
 
 def jwt_secret() -> str:
-    s = os.environ.get("DATANORMA_JWT_SECRET", "").strip()
-    if not s:
-        return "dev-insecure-change-me"
-    return s
+    s = get_settings().datanorma_jwt_secret.strip()
+    return s or "dev-insecure-change-me"
 
 
 def jwt_expire_hours() -> int:
-    return int(os.environ.get("DATANORMA_JWT_EXPIRE_HOURS", "24"))
+    return get_settings().datanorma_jwt_expire_hours
 
 
 def dagster_console_url() -> str:
-    return os.environ.get("DATANORMA_DAGSTER_UI_URL", "http://127.0.0.1:3000").strip()
+    return get_settings().datanorma_dagster_ui_url.strip()

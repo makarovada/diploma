@@ -1,0 +1,22 @@
+# Пример Connector Builder (low-code REST): копируйте и правьте под свой API.
+# Проверка и discover доступны в UI /app/sources/new (тип «REST (YAML)»).
+#
+# Секреты: для bearer / api_key укажите env_var и задайте переменную окружения на воркере.
+version: 1
+base_url: "https://jsonplaceholder.typicode.com"
+auth:
+  type: none
+timeout_seconds: 30.0
+# Раскомментируйте для обогащения схемы из OpenAPI (если сервис отдаёт спецификацию):
+# openapi_url: "https://petstore.swagger.io/v2/swagger.json"
+openapi_url: null
+streams:
+  - name: posts
+    path: /posts
+    method: GET
+    # Пустой path = корень JSON; для Ozon используйте, например: result.postings
+    records_json_path: ""
+    pagination:
+      type: none
+      limit: 50
+      max_pages: 5

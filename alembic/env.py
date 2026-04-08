@@ -1,12 +1,13 @@
-"""Alembic: URL из переменной DATABASE_URL (как в приложении)."""
+"""Alembic: URL БД через `datanorma.config` (env + `.env`, как в приложении)."""
 
 from __future__ import annotations
 
-import os
 from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from datanorma.config import get_settings
 
 config = context.config
 if config.config_file_name is not None:
@@ -16,10 +17,7 @@ target_metadata = None
 
 
 def get_url() -> str:
-    url = os.environ.get("DATABASE_URL", "").strip()
-    if url:
-        return url
-    return "postgresql+psycopg://datanorma:datanorma@127.0.0.1:5433/datanorma"
+    return get_settings().database_url
 
 
 def run_migrations_offline() -> None:
