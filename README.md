@@ -1,10 +1,283 @@
 # DataNorma
 
+DataNorma - сервис интеграции и нормализации данных для малого и среднего бизнеса, ориентированный на российскую аудиторию.  
+По продуктовой идее это аналог Airbyte: готовые коннекторы, управляемые синхронизации, единая каноническая модель данных и операционная консоль.
+
+Текущая реализация сочетает:
+- оркестрацию в Dagster;
+- коннекторы к популярным источникам (Ozon, 1C, Google Sheets);
+- нормализацию в Python/YAML;
+- загрузку в PostgreSQL (staging + warehouse);
+- веб-интерфейс и REST API на FastAPI + Jinja2 с RBAC.
+
+## 1) Что умеет проект сейчас
+
+- Подключает данные из готовых источников и в fallback-режиме работает на sample-файлах.
+- Поддерживает режимы full refresh и incremental по курсору.
+- Пишет raw-слой в PostgreSQL (`raw_*_staging`) с Airbyte-style метаданными.
+- Приводит данные к канонической модели продаж (`canonical_sales`).
+- Выполняет enrichment: даты в `Europe/Moscow`, конвертация валют через ЦБ РФ, нормализация единиц.
+- Типизирует канонический слой по YAML-схеме.
+- Загружает витрину в warehouse через UPSERT.
+- Даёт UI для операционных и аналитических сценариев + API и матрицу ролей.
+
+## 2) Архитектура (в терминах потока)
+
+Основной pipeline:
+
+1. `sync_catalog` - готовит конфиг потоков и resume state.
+2. `raw_ozon` / `raw_1c` / `raw_google_sheet` - читают источники.
+3. `staging_raw_postgres` - сохраняет сырой слой в PostgreSQL.
+4. `normalized_orders` - канонизация, дедупликация, enrichment.
+5. `typed_canonical_sales` - типизация колонок по схеме.
+6. `warehouse_sales` - UPSERT в витрину `canonical_sales`.
+7. `dbt_run` - пост-трансформации в dbt.
+
+Точка сборки всех assets: `datanorma/definitions.py`.
+
+## 3) Полная карта проекта
+
+### Корневые директории
+
+- `datanorma/` - основное приложение.
+- `alembic/` - миграции БД.
+- `dbt/` - dbt-проект (marts и источники).
+- `docs/` - документация и manual testing.
+- `tests/` - unit/smoke тесты.
+- `data/samples/` - демо-данные для запуска без секретов.
+- `scripts/` - утилиты, включая seed данных.
+- `helm/` - deployment-скелет для Kubernetes.
+
+### Внутри `datanorma/`
+
+- `assets/` - Dagster assets по этапам конвейера.
+- `sources/` - коннекторы и source factory (`check/discover/read`).
+- `normalization/` - mapping, fuzzy, даты/валюта/units, typing.
+- `warehouse/` - запись в staging и warehouse, sync state.
+- `web/` - FastAPI API + Jinja2 UI + auth/RBAC/static/templates.
+- `resources/` - ресурсы Dagster (Postgres, paths).
+- `schemas/` - YAML-схемы и маппинги.
+- `checks/` - проверки качества данных (Dagster asset checks).
+- `schedules/` - расписания и sensor-оповещения.
+- `core/` - базовые типы и протоколы.
+- `ingest/` - stream config и cursor filtering.
+
+## 4) Технологический стек
+
+- Python 3.11+
+- Dagster, dagster-webserver, dagster-dbt
+- FastAPI, Uvicorn, Jinja2, PyJWT
+- SQLAlchemy 2.x, psycopg3, Alembic, PostgreSQL
+- dbt-core + dbt-postgres
+- httpx
+- pandas, openpyxl
+- gspread, google-auth
+- RapidFuzz
+- pydantic-settings
+
+Файл зависимостей: `pyproject.toml`.
+
+## 5) Быстрый старт (локальная разработка)
+
+### 5.1 Установка
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e .
+```
+
+Для тестов:
+
+```bash
+pip install -e ".[dev]"
+```
+
+### 5.2 Поднять PostgreSQL
+
+```bash
+docker compose up -d
+```
+
+По умолчанию контейнер доступен на `127.0.0.1:5433`  
+(внутри контейнера `5432`, снаружи специально `5433`).
+
+### 5.3 Накатить схему и сиды
+
+```bash
+alembic upgrade head
+python scripts/seed_database.py
+```
+
+### 5.4 Запустить платформу
+
+Dagster UI (оркестрация):
+
+```bash
+dagster dev -m datanorma.definitions
+```
+
+Web/API:
+
+```bash
+python -m datanorma.web
+```
+
+По умолчанию веб-приложение поднимается на `http://127.0.0.1:8080`.
+
+## 6) Конфигурация и переменные окружения
+
+Основной файл примеров: `.env.example`  
+Централизация настроек: `datanorma/config.py`
+
+Ключевые переменные:
+
+- `DATABASE_URL` - строка подключения к PostgreSQL.
+- `DATANORMA_SOURCE_MAPPINGS_PATH` - путь к кастомному YAML-маппингу.
+- `DATANORMA_REPO_ROOT` - корень репозитория (важно для sample-данных вне editable-режима).
+- `DATANORMA_WAREHOUSE_TABLE` - имя целевой витрины (по умолчанию `canonical_sales`).
+- `DATANORMA_JWT_SECRET`, `DATANORMA_JWT_EXPIRE_HOURS` - аутентификация веба/API.
+- `DATANORMA_DAGSTER_UI_URL` - ссылка на внешний Dagster UI из веба.
+- `OZON_CLIENT_ID`, `OZON_API_KEY`, `OZON_FETCH_LIMIT` - Ozon API.
+- `DATANORMA_1C_EXPORT_PATH` - путь к 1C CSV/XLSX.
+- `GSPREAD_SERVICE_ACCOUNT_FILE`, `GSPREAD_SPREADSHEET_ID`, `GSPREAD_WORKSHEET` - Google Sheets.
+
+## 7) Источники данных (connectors)
+
+### Встроенные коннекторы
+
+- **Ozon** (`datanorma/sources/ozon.py`)  
+  Читает postings через Ozon Seller API; при отсутствии ключей использует sample JSON.
+
+- **1C** (`datanorma/sources/onec.py`)  
+  Читает выгрузку CSV/XLSX (через pandas/openpyxl), fallback на sample CSV.
+
+- **Google Sheets** (`datanorma/sources/sheets.py`)  
+  Работает через service account (`gspread`), fallback на sample CSV.
+
+### Коннектор-конструктор (low-code)
+
+- `datanorma/sources/builder.py`
+- схема: `datanorma/schemas/connector_builder.yaml`
+
+Поддерживаются декларативные REST-коннекторы (auth/pagination/discover/read), включая сценарий генерации из OpenAPI.
+
+## 8) Нормализация и каноническая модель
+
+### Каноника
+
+- Схема: `datanorma/schemas/canonical_sales.yaml`
+- Маппинг источников: `datanorma/schemas/source_mappings.yaml`
+
+### Что делает слой нормализации
+
+- Сопоставляет поля источников с каноническими полями.
+- Может применять fuzzy matching названий колонок.
+- Обрабатывает source-specific особенности (включая Ozon handler).
+- Дедуплицирует записи по `(source_system, source_record_id)`.
+- Нормализует даты в московскую таймзону.
+- Считает `amount_rub` по курсу ЦБ РФ.
+- Нормализует единицы измерения.
+
+Ключевые модули:
+
+- `datanorma/normalization/to_canonical.py`
+- `datanorma/normalization/enrich.py`
+- `datanorma/normalization/dates_msk.py`
+- `datanorma/normalization/cbr_rates.py`
+- `datanorma/normalization/units.py`
+- `datanorma/normalization/typing.py`
+
+## 9) База данных и хранение
+
+- Миграции: `alembic/versions/`
+- Сырой слой: `raw_ozon_postings_staging`, `raw_1c_orders_staging`, `raw_google_sheet_orders_staging`
+- Состояние синхронизации: `sync_state`
+- Витрина: `canonical_sales` (или имя из `DATANORMA_WAREHOUSE_TABLE`)
+
+В raw-слое используются техполя в стиле Airbyte:
+- `_airbyte_raw_id`
+- `_airbyte_extracted_at`
+- `_airbyte_meta`
+
+## 10) Web UI и API
+
+- Приложение: `datanorma/web/main.py`
+- Запуск: `python -m datanorma.web`
+- UI-маршруты (Jinja2): `datanorma/web/pages_jinja.py`
+- API-роутер: `datanorma/web/api_router.py`
+- RBAC-матрица: `datanorma/web/rbac_matrix.py`
+
+Реализованы:
+- аутентификация (JWT + cookie для web flow),
+- роли и проверка операций,
+- страницы по источникам/коннекциям/синкам/витрине/админке,
+- REST API под `/api`.
+
+Каталог маршрутов для тестирования: `docs/phase_c_routes.md`.
+
+## 11) Тестирование и качество
+
+Запуск:
+
+```bash
+pytest tests/ -q
+```
+
+Что покрыто тестами:
+- нормализация и enrich;
+- курсоры incremental;
+- staging и warehouse;
+- Airbyte protocol layer;
+- API-маршруты и RBAC;
+- Dagster definitions/checks.
+
+Проверки качества в Dagster:
+- `datanorma/checks/data_quality.py`
+
+## 12) Документация в репозитории
+
+- `docs/README.md` - индекс документации и единый стандарт.
+- `docs/manual_testing_guide.md` - детальные ручные сценарии.
+- `docs/comparison_airbyte.md` - сравнение с Airbyte.
+- `docs/adding_russian_connector.md` - как добавить новый российский коннектор.
+- `docs/phase_c_routes.md` - список web-маршрутов.
+- `docs/vkr_rbac_text.md` - текстовый материал по RBAC для ВКР.
+
+## 13) Ограничения текущей версии
+
+- Основной destination сейчас один: PostgreSQL.
+- Часть возможностей Airbyte реализована частично или в упрощенном виде (особенно вокруг универсальности коннекторов и UX-конструктора).
+- Есть API-эндпоинты в формате продукта, но не все из них запускают полный продакшен-оркестрационный цикл.
+- Проект ориентирован на дипломный MVP и развитие в сторону полноценного SaaS.
+
+## 14) Roadmap (куда развивать дальше)
+
+- Расширить набор готовых коннекторов для российского SMB.
+- Улучшить incremental/state и обработку schema changes.
+- Добавить больше destination-адаптеров кроме PostgreSQL.
+- Укрепить CI/CD и автопроверки.
+- Развить мультитенантный контур (organization/workspace) до production-ready состояния.
+- Расширить no-code/low-code UX для управления коннекциями.
+
+## 15) Позиционирование относительно Airbyte
+
+DataNorma уже закрывает базовый сценарий "подключить источник -> нормализовать -> загрузить в warehouse" в российском контексте и с акцентом на бизнес-данные МСБ.
+
+Ключевое отличие на текущем этапе:
+- Airbyte - зрелая универсальная платформа с большим ecosystem;
+- DataNorma - целевой продуктовый MVP, фокусированный на локальных интеграциях, кастомной нормализации и прозрачном Python/Dagster-контуре.
+
+Подробное сравнение: `docs/comparison_airbyte.md`.
+# DataNorma
+
 Конфигурируемый прототип интеграции и нормализации данных для МСБ (оркестрация: **Dagster**).
 
 ## Сравнение с Airbyte
 
 Веб-консоль и смысловые блоки (Sources, Destinations, Connections, sync history и т.д.) сознательно согласованы с продуктовой логикой **[Airbyte](https://airbyte.com)** (open-source EL/ELT), но оркестрация и нормализация реализованы на **Dagster** и собственном Python/YAML-слое. Развёрнутая таблица соответствий и отличий: **[docs/comparison_airbyte.md](docs/comparison_airbyte.md)**.
+
+- Полный перечень текущего функционала и пошаговое ручное тестирование (включая интеграции): **[docs/manual_testing_guide.md](docs/manual_testing_guide.md)**.
 
 - Централизованные пути и переменные окружения: **`datanorma/config.py`** (`pydantic-settings`, при необходимости читает `.env`).
 - Базовые типы **Airbyte Protocol** (Record, State, Catalog, Stream …): **`datanorma/core/airbyte_protocol.py`**.

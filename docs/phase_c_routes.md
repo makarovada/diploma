@@ -1,39 +1,82 @@
-# Фаза C: маршруты веб-клиента (`/app/...`)
+# Web UI маршруты (`/app/*`)
 
-Уникальные пути (для приложения к ВКР и подсчёта «экранов»). Часть маршрутов — POST (формы).
+Справочник маршрутов пользовательского веб-интерфейса DataNorma (FastAPI + Jinja2) для приемки, скриншотов и регрессионных проверок.
 
-Переменные окружения и пути для веб-слоя и пайплайна — **`datanorma/config.py`** (`Settings`). Сравнение с Airbyte — **[comparison_airbyte.md](comparison_airbyte.md)**.
+## 1. Контекст
 
-**Терминология UI** в духе [Airbyte](https://airbyte.com): **Sources**, **Destinations**, **Connections**, sync history, secrets, replication schedule; оркестрация вынесена в **Dagster** (`/app/external/dagster`).
+- UI использует терминологию, близкую к Airbyte: `Sources`, `Destinations`, `Connections`, `Syncs`.
+- Оркестрация вынесена в Dagster; из UI доступна ссылка-переход.
+- Доступ к страницам контролируется RBAC-матрицей.
+
+## 2. Основные маршруты
 
 | Маршрут | Назначение |
 |---------|------------|
-| `GET /app/login` | Вход |
-| `POST /app/login` | Проверка логина, cookie JWT |
-| `GET /app/logout` | Выход, сброс cookie |
-| `GET /app/dashboard` | Home / дашборд (карточки connections, витрина) |
-| `GET /app/connections` | Connections: логические source→destination, недавние sync jobs |
-| `GET /app/destinations` | Destinations: PostgreSQL (staging + витрина) |
-| `GET /app/external/dagster` | Редирект на Dagster UI (оркестрация) |
-| `GET/POST /app/account/password` | Смена пароля |
-| `GET /app/sources` | Список источников + sync |
-| `GET /app/sources/{code}` | Карточка источника |
-| `GET/POST /app/integrations/secrets` | Конфиги (маскирование), добавление (админ) |
-| `GET /app/mappings` | Список профилей маппинга |
-| `GET/POST /app/mappings/editor` | Редактор YAML (без записи на диск) |
-| `GET /app/samples/preview` | Предпросмотр sample |
-| `GET /app/runs` | Список запусков |
-| `GET /app/runs/{id}` | Детали run |
-| `GET /app/pipeline/graph` | Статическая схема + Dagster |
-| `GET /app/warehouse/sales` | Витрина, фильтр `source_system` |
-| `GET /app/warehouse/export` | Экран экспорта |
-| `GET /app/warehouse/download.csv` | Скачивание CSV |
-| `GET /app/ref/currencies` | Справочник валют |
-| `GET /app/ref/source-systems` | Справочник источников (dim) |
-| `GET /app/admin/users` | Пользователи |
-| `GET/POST /app/admin/user-roles` | Назначение / снятие ролей |
-| `GET /app/monitoring/normalization` | Журнал normalization_issue |
-| `GET/POST /app/settings/schedule` | Cron-текст в `integration_config` |
-| `GET /app/about` | О системе и FAQ |
+| `GET /app/login` | Страница входа |
+| `POST /app/login` | Аутентификация, установка cookie/JWT |
+| `GET /app/logout` | Выход и очистка сессии |
+| `GET /app/dashboard` | Главная страница с операционными метриками |
+| `GET /app/about` | О системе, контекст и FAQ |
+| `GET /app/external/dagster` | Переход в Dagster UI |
 
-Дополнительно: одностраничный клиент на **`/ui/`** (фаза B), REST **`/api/*`**.
+## 3. Build-раздел
+
+| Маршрут | Назначение |
+|---------|------------|
+| `GET /app/sources` | Список источников |
+| `GET /app/sources/new` | Форма проверки/обнаружения нового source |
+| `GET /app/sources/{code}` | Карточка источника |
+| `GET /app/destinations` | Назначения (destinations) |
+| `GET /app/connections` | Список connections |
+| `POST /app/connections` | Изменение конфигурации connection |
+| `GET /app/connections/sample/{code}` | Просмотр sample-данных источника |
+| `GET /app/mappings` | Профили маппинга |
+| `GET /app/mappings/editor` | Редактор маппинга (preview) |
+| `POST /app/mappings/editor` | Валидация/предпросмотр маппинга |
+
+## 4. Monitor-раздел
+
+| Маршрут | Назначение |
+|---------|------------|
+| `GET /app/runs` | История запусков |
+| `GET /app/runs/{id}` | Детали конкретного запуска |
+| `GET /app/pipeline/graph` | Схема pipeline и переход к Dagster |
+| `GET /app/monitoring/normalization` | Журнал нормализации |
+| `GET /app/samples/preview` | Предпросмотр sample-данных |
+| `GET /app/warehouse/sales` | Просмотр витрины |
+| `GET /app/warehouse/export` | Экран экспорта данных |
+| `GET /app/warehouse/download.csv` | Скачивание CSV из витрины |
+
+## 5. Settings и администрирование
+
+| Маршрут | Назначение |
+|---------|------------|
+| `GET /app/integrations/secrets` | Просмотр конфигурации интеграций |
+| `POST /app/integrations/secrets` | Обновление секретов/параметров |
+| `GET /app/settings/schedule` | Просмотр расписания |
+| `POST /app/settings/schedule` | Обновление cron-настроек |
+| `GET /app/account/password` | Форма смены пароля |
+| `POST /app/account/password` | Смена пароля |
+| `GET /app/admin/users` | Пользователи |
+| `GET /app/admin/user-roles` | Матрица ролей пользователей |
+| `POST /app/admin/user-roles` | Назначение/снятие ролей |
+| `GET /app/workspaces` | Просмотр workspaces |
+| `GET /app/ref/source-systems` | Справочник источников |
+| `GET /app/ref/currencies` | Справочник валют |
+
+## 6. Дополнительные маршруты
+
+- Legacy SPA интерфейс: `/ui/`
+- REST API: `/api/*` и `/api/v1/*`
+
+## 7. Примечания для приемки
+
+- Не все POST-маршруты имеют одинаковую глубину персистентности (часть форм MVP-уровня).
+- Редактор маппингов предназначен для preview/валидации и не сохраняет YAML в файлы репозитория.
+- Для ролевой приемки используйте матрицу операций из `/api/rbac/matrix`.
+
+## 8. Связанные документы
+
+- Карта проекта и runbook: `README.md`
+- Ручное тестирование: `docs/manual_testing_guide.md`
+- RBAC для ВКР: `docs/vkr_rbac_text.md`

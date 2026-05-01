@@ -1,19 +1,40 @@
 # Сравнение DataNorma и Airbyte
 
-Краткая таблица для ВКР и онбординга: где прототип сознательно **похож** на [Airbyte](https://airbyte.com) (open-source EL / ELT), а где **расходится** по архитектуре дипломного объёма.
+Документ фиксирует текущее позиционирование DataNorma как MVP-платформы интеграции данных для малого и среднего бизнеса в РФ.
+По смыслу DataNorma следует продуктовой модели [Airbyte](https://airbyte.com): `sources -> connections -> sync -> destination`, но реализована на собственном стеке (Dagster + FastAPI + PostgreSQL + Python/YAML-нормализация).
 
-| Аспект | Airbyte | DataNorma |
-|--------|---------|-----------|
-| **Назначение** | Универсальная платформа EL(T): сотни коннекторов, SaaS и self-hosted | Узкий прототип под МСБ РФ: Ozon, 1С, Sheets → каноническая витрина |
-| **Источники (Sources)** | Каталог коннекторов, CDK, marketplace | Фиксированные интеграции + YAML-маппинг полей |
-| **Назначения (Destinations)** | Много типов БД/хранилищ | PostgreSQL (staging raw + витрина) |
-| **Connections** | Связь source ↔ destination, конфигурация в UI | Логические связи и экраны в духе Airbyte; фактически один warehouse |
-| **Протокол обмена** | Airbyte Protocol (RECORD / STATE / CATALOG …) over stdio | Модели в `datanorma/core/airbyte_protocol.py` для будущей совместимости; сейчас Dagster assets + БД |
-| **Состояние инкремента** | `StateMessage`, worker | Таблица `sync_state` + курсоры в PostgreSQL |
-| **Нормализация** | Опционально dbt / typing в платформе | Python + YAML (`source_mappings.yaml`), fuzzy, ЦБ РФ, даты MSK |
-| **Оркестрация** | Встроенные job / worker Airbyte | **Dagster** (граф assets, расписания, UI отдельно) |
-| **UI** | Airbyte Cloud / OSS console | Jinja2-консоль в визуальном духе Airbyte + REST + legacy `/ui/` |
-| **RBAC / мультитенант** | Зависит от продукта / деплоя | JWT, роли, матрица операций (демо ВКР) |
-| **Зависимости разработки** | Собственный CDK | `dbt-postgres` в extra `dev`; `airbyte-cdk` в extra `dev-airbyte` (по необходимости) |
+## Краткое сравнение
 
-Подробности про терминологию в интерфейсе см. **`/app/about`** в запущенном веб-клиенте и `README.md` (фаза C).
+| Аспект | Airbyte | DataNorma (текущее состояние) |
+|--------|---------|-------------------------------|
+| **Назначение** | Универсальная EL(T)-платформа, большой ecosystem | Вертикально сфокусированный MVP под SMB РФ |
+| **Sources** | Большой каталог коннекторов + marketplace | Встроенные коннекторы (`Ozon`, `1C`, `Google Sheets`) + `rest_builder` |
+| **Destinations** | Много хранилищ и БД | Сейчас один основной destination: PostgreSQL |
+| **Connections** | Богатая модель связей source/destination в UI | Логика connections присутствует в API/UI, практический контур заточен под единый warehouse |
+| **Incremental state** | Нативный state-протокол и workers | `sync_state` в PostgreSQL + cursor filtering в pipeline |
+| **Нормализация** | Typing/Dedup + dbt-пайплайны | Кастомная бизнес-нормализация (MSK datetime, ЦБ РФ, fuzzy, units) |
+| **Оркестрация** | Собственный runtime | Dagster assets/schedules/checks/sensors |
+| **UI/API** | Зрелая product-консоль | FastAPI + Jinja2 UI (`/app/*`) + REST (`/api/*`, `/api/v1/*`) |
+| **RBAC/мультитенантность** | Развитые enterprise-сценарии | Роли и матрица операций есть; мультитенантность реализована базовым контуром |
+| **Расширяемость** | Высокая, через CDK/коннекторы | Есть source framework и YAML builder, но ecosystem пока ограничен |
+
+## Что уже близко к Airbyte
+
+- Единая терминология `sources/destinations/connections/syncs`.
+- Инкрементальный контур со state в БД.
+- Raw staging слой и последующая нормализация/загрузка в warehouse.
+- Наличие API/UI-слоя для операционной работы команды.
+
+## Что остаётся развить до уровня полноценной платформы
+
+- Расширить библиотеку готовых российских коннекторов.
+- Добавить больше destination-адаптеров.
+- Укрепить жизненный цикл sync jobs (ретраи, более полная оркестрация через API).
+- Расширить no-code UX для конфигурирования связей и маппингов.
+- Усилить production-ready контур (CI/CD, деплой-практики, эксплуатационная наблюдаемость).
+
+## Связанные документы
+
+- Карта проекта и runbook: `README.md`
+- Полный чеклист ручного тестирования: `docs/manual_testing_guide.md`
+- Список UI-маршрутов: `docs/phase_c_routes.md`
