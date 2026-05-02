@@ -1,0 +1,92 @@
+import { useQuery } from "@tanstack/react-query";
+import { appUsers } from "@/lib/mock-data";
+import { PageHeader } from "@/components/page-header";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+
+const roleRu: Record<string, string> = {
+  platform_admin: "Администратор платформы",
+  data_integrator: "Интегратор данных",
+  analyst: "Аналитик",
+  viewer: "Наблюдатель",
+};
+
+const statusRu: Record<string, string> = {
+  active: "Активен",
+  invited: "Приглашён",
+  disabled: "Отключён",
+};
+
+export function UsersPage() {
+  const query = useQuery({
+    queryKey: ["users"],
+    queryFn: async () => {
+      await new Promise((r) => setTimeout(r, 200));
+      return appUsers;
+    },
+  });
+
+  if (query.isLoading) return <div data-testid="state-loading-users" className="p-4">Загрузка пользователей…</div>;
+  if (query.isError || !query.data) return <div data-testid="state-error-users" className="p-4">Ошибка загрузки.</div>;
+
+  return (
+    <div className="p-4">
+      <PageHeader title="Пользователи и роли" description="Доступ к интеграциям и администрированию" breadcrumbs="Администрирование / Пользователи" actions={<Button data-testid="button-invite-user">Пригласить пользователя</Button>} />
+      <div className="overflow-auto rounded-lg border" data-testid="table-users">
+        <table className="w-full min-w-[900px] text-left text-sm" aria-label="Пользователи">
+          <thead className="bg-muted">
+            <tr>
+              <th>Имя</th>
+              <th>Email</th>
+              <th>Роль</th>
+              <th>Рабочее пространство</th>
+              <th>Статус</th>
+              <th>Последняя активность</th>
+              <th />
+            </tr>
+          </thead>
+          <tbody>
+            {query.data.map((u) => (
+              <tr key={u.id} className="border-t" data-testid={`row-user-${u.id}`}>
+                <td>{u.name}</td>
+                <td>{u.email}</td>
+                <td>{roleRu[u.role]}</td>
+                <td>{u.workspace}</td>
+                <td>{statusRu[u.status]}</td>
+                <td>{u.lastActive}</td>
+                <td>
+                  <Button variant="outline" className="px-2 py-1 text-xs" data-testid={`button-edit-user-${u.id}`}>
+                    Изменить роль
+                  </Button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <Card className="mt-6 p-4" data-testid="matrix-rbac-preview">
+        <h2 className="mb-2 text-lg font-semibold">Матрица прав (фрагмент)</h2>
+        <p className="mb-3 text-sm text-muted-foreground">Создание подключений, запуск sync, просмотр секретов — по ролям.</p>
+        <div className="overflow-auto">
+          <table className="w-full min-w-[640px] text-center text-xs" aria-label="Матрица ролей">
+            <thead>
+              <tr className="border-b bg-muted">
+                <th className="p-2 text-left">Операция</th>
+                <th className="p-2">Админ</th>
+                <th className="p-2">Интегратор</th>
+                <th className="p-2">Аналитик</th>
+                <th className="p-2">Наблюдатель</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-t"><td className="p-2 text-left">Создавать подключение</td><td>✓</td><td>✓</td><td>—</td><td>—</td></tr>
+              <tr className="border-t"><td className="p-2 text-left">Запускать синхронизацию</td><td>✓</td><td>✓</td><td>—</td><td>—</td></tr>
+              <tr className="border-t"><td className="p-2 text-left">Редактировать маппинг</td><td>✓</td><td>✓</td><td>—</td><td>—</td></tr>
+              <tr className="border-t"><td className="p-2 text-left">Смотреть логи</td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    </div>
+  );
+}

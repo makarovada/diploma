@@ -5,14 +5,17 @@ from __future__ import annotations
 import csv
 import io
 import json
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Annotated, Any
+from xml.etree import ElementTree as ET
 
 import yaml
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
+from openpyxl import Workbook
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
@@ -23,8 +26,29 @@ from datanorma.sources.registry import create_source
 from datanorma.web.config import dagster_console_url
 from datanorma.web.deps import AuthUser, get_conn
 from datanorma.web.jwt_util import create_access_token
+from datanorma.web.mapping_profiles import (
+    MappingProfileError,
+    activate_profile_version,
+    create_draft_version,
+    list_profiles,
+    list_versions,
+    publish_version,
+    resolve_workspace_id,
+    rollback_to_version,
+)
 from datanorma.web.passwords import hash_password, verify_password
-from datanorma.web.sql_util import warehouse_table_sql
+from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
+from datanorma.web.sync_runs import (
+    SyncRunError,
+    create_sync_run,
+    get_sync_run,
+    launch_dagster_run,
+    mark_sync_run_failed,
+    mark_sync_run_running,
+    refresh_recent_sync_runs,
+    refresh_sync_run_status,
+    resolve_connection,
+)
 from datanorma.web.users_repo import list_roles, list_users_with_roles, load_user_by_username
 from datanorma.web.web_auth import COOKIE_NAME, get_web_user_optional, require_web_op
 
@@ -38,7 +62,7 @@ def _safe_next(n: str) -> str:
     v = (n or "/app/dashboard").strip() or "/app/dashboard"
     return v if v.startswith("/app/") else "/app/dashboard"
 
-# Навигация в духе Airbyte: секции Home / Build / Monitor / Settings / Access / Reference / Support.
+# Навигация в духе Ingest: секции Home / Build / Monitor / Settings / Access / Reference / Support.
 NAV_GROUPS: list[tuple[str, list[tuple[str, str, str]]]] = [
     (
         "Home",
@@ -130,7 +154,7 @@ def _ctx(request: Request, user: AuthUser, **kw: Any) -> dict[str, Any]:
 
 
 def _connection_cards(conn: Connection) -> list[dict[str, Any]]:
-    """Логические «connections» как в Airbyte: source → destination."""
+    """Логические «connections» как в Ingest: source → destination."""
     specs = [
         ("ozon", "Ozon Seller API", "Ozon FBS → PostgreSQL (staging → canonical)"),
         ("1c", "1С (CSV/XLSX)", "1С → PostgreSQL (staging → canonical)"),
@@ -184,6 +208,42 @@ def _samples_dir() -> Path:
 
 def _mappings_yaml_path() -> Path:
     return get_settings().resolved_source_mappings_path()
+
+
+def _canonical_sales_columns() -> list[str]:
+    return [
+        "source_system",
+        "source_record_id",
+        "event_datetime",
+        "amount",
+        "amount_rub",
+        "currency_code",
+        "channel",
+        "status",
+        "loaded_at",
+    ]
+
+
+def _safe_export_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
+    return value
+
+
+def _fetch_canonical_sales_rows(conn: Connection, *, limit: int) -> list[dict[str, Any]]:
+    t = warehouse_table_sql()
+    rows = conn.execute(
+        text(
+            f"SELECT source_system, source_record_id, event_datetime, amount, amount_rub, currency_code, "
+            f"channel, status, loaded_at FROM {t} ORDER BY loaded_at DESC NULLS LAST LIMIT :lim"
+        ),
+        {"lim": limit},
+    ).mappings().all()
+    return [dict(r) for r in rows]
 
 
 def _default_connector_builder_yaml() -> str:
@@ -340,7 +400,7 @@ def page_connections_post(
     ajs = json.dumps({"cursor": None, "rows_emitted": 0, "edited_via": "connections_builder"}, ensure_ascii=False)
     conn.execute(
         text(
-            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, airbyte_state, last_success_at, updated_at) "
+            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, last_success_at, updated_at) "
             "VALUES (:ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
             "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
             "sync_mode = EXCLUDED.sync_mode, cursor_field = EXCLUDED.cursor_field, updated_at = NOW()"
@@ -367,7 +427,7 @@ def page_connection_sample(
         raise HTTPException(status_code=404, detail="Неизвестный source code")
     rows = conn.execute(
         text(
-            f"SELECT id, _airbyte_extracted_at, _airbyte_meta, "
+            f"SELECT id, _ingest_extracted_at, _ingest_meta, "
             + ("payload_json AS payload" if code == "ozon" else "row_json AS payload")
             + f" FROM {table} ORDER BY id DESC LIMIT 12"
         )
@@ -388,6 +448,46 @@ def page_destinations(
 ):
     t = warehouse_table_sql()
     n = int(conn.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar_one())
+    source_rows = conn.execute(
+        text("SELECT code, name FROM dim_source_system ORDER BY code")
+    ).mappings().all()
+    destinations = [
+        {
+            "code": "postgres",
+            "name": "PostgreSQL (warehouse)",
+            "kind": "database",
+            "details": "Хранилище canonical_sales + staging/sync_state.",
+            "download_url": None,
+        },
+        {
+            "code": "csv",
+            "name": "CSV file",
+            "kind": "file",
+            "details": "Плоский файл для обмена и импорта в BI/Excel.",
+            "download_url": "/app/warehouse/download.csv",
+        },
+        {
+            "code": "xlsx",
+            "name": "Excel (.xlsx)",
+            "kind": "file",
+            "details": "Табличная выгрузка в формате Office Open XML.",
+            "download_url": "/app/warehouse/download.xlsx",
+        },
+        {
+            "code": "json",
+            "name": "JSON",
+            "kind": "file",
+            "details": "API-friendly выгрузка массива записей canonical_sales.",
+            "download_url": "/app/warehouse/download.json",
+        },
+        {
+            "code": "xml",
+            "name": "XML",
+            "kind": "file",
+            "details": "Структурированная выгрузка для legacy/EDI сценариев.",
+            "download_url": "/app/warehouse/download.xml",
+        },
+    ]
     return templates.TemplateResponse(
         request,
         "destinations.html",
@@ -396,6 +496,8 @@ def page_destinations(
             user,
             warehouse_table=t,
             warehouse_rows=n,
+            source_systems=[dict(r) for r in source_rows],
+            destinations=destinations,
         ),
     )
 
@@ -679,14 +781,44 @@ def page_mappings(
     user: Annotated[AuthUser, Depends(require_web_op("view_mapping_profiles"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ):
-    rows = conn.execute(
-        text("SELECT id, name, version, notes, created_at FROM mapping_profile ORDER BY id")
-    ).mappings().all()
+    workspace_id = resolve_workspace_id(conn, workspace_code="main")
+    rows = list_profiles(conn, workspace_id)
+    for r in rows:
+        r["versions"] = list_versions(conn, int(r["id"]))[:5]
     return templates.TemplateResponse(
         request,
         "mappings_list.html",
-        _ctx(request, user, rows=[dict(r) for r in rows]),
+        _ctx(request, user, rows=rows),
     )
+
+
+@router.post("/mappings/activate")
+def page_mappings_activate(
+    user: Annotated[AuthUser, Depends(require_web_op("edit_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    profile_id: int = Form(),
+    version_id: int = Form(),
+):
+    activate_profile_version(conn, profile_id=profile_id, version_id=version_id, updated_by=user.username)
+    return RedirectResponse("/app/mappings", status_code=303)
+
+
+@router.post("/mappings/rollback")
+def page_mappings_rollback(
+    user: Annotated[AuthUser, Depends(require_web_op("edit_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    profile_id: int = Form(),
+    version_id: int = Form(),
+    note: str = Form(default=""),
+):
+    rollback_to_version(
+        conn,
+        profile_id=profile_id,
+        version_id=version_id,
+        updated_by=user.username,
+        note=note.strip() or None,
+    )
+    return RedirectResponse("/app/mappings", status_code=303)
 
 
 @router.get("/mappings/editor")
@@ -710,6 +842,7 @@ def page_mappings_editor_get(
             path=str(path),
             yaml_content=text_content,
             mappings_json=json.dumps(mappings_obj, ensure_ascii=False),
+            mode="save_draft",
         ),
     )
 
@@ -718,15 +851,53 @@ def page_mappings_editor_get(
 def page_mappings_editor_post(
     request: Request,
     user: Annotated[AuthUser, Depends(require_web_op("edit_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
     yaml_content: str = Form(default=""),
+    action: str = Form(default="save_draft"),
+    profile_name: str = Form(default="default"),
+    change_note: str = Form(default=""),
 ):
-    note = "В прототипе изменения не пишутся на диск: используйте GitOps / IDE. Показана отправленная копия."
+    note = "Профиль сохранен."
     mappings_obj: dict[str, Any] = {}
     try:
         mappings_obj = yaml.safe_load(yaml_content) or {}
         if not isinstance(mappings_obj, dict):
             mappings_obj = {}
-            note = "YAML разобран, но корень не объект. Показана исходная копия."
+            note = "YAML разобран, но корень не объект."
+        else:
+            workspace_id = resolve_workspace_id(conn, workspace_code="main")
+            sources = mappings_obj.get("sources") or {}
+            saved = 0
+            for source_type, source_rules in sources.items():
+                if not isinstance(source_rules, dict):
+                    continue
+                stream = str(source_rules.get("stream") or "orders")
+                draft = create_draft_version(
+                    conn,
+                    workspace_id=workspace_id,
+                    source_type=str(source_type),
+                    stream_name=stream,
+                    profile_name=profile_name.strip() or "default",
+                    rules_json=source_rules,
+                    created_by=user.username,
+                    change_note=change_note.strip() or None,
+                )
+                if action == "publish_activate":
+                    pub = publish_version(conn, profile_id=int(draft["profile_id"]), version_id=int(draft["id"]))
+                    activate_profile_version(
+                        conn,
+                        profile_id=int(draft["profile_id"]),
+                        version_id=int(pub["id"]),
+                        updated_by=user.username,
+                    )
+                saved += 1
+            note = (
+                f"Сохранено draft-версий: {saved}."
+                if action == "save_draft"
+                else f"Опубликовано и активировано профилей: {saved}."
+            )
+    except MappingProfileError as exc:
+        note = f"Ошибка профиля: {exc}. Показана исходная копия."
     except Exception as exc:
         note = f"Ошибка YAML: {exc}. Показана исходная копия."
     return templates.TemplateResponse(
@@ -739,6 +910,7 @@ def page_mappings_editor_post(
             yaml_content=yaml_content,
             note=note,
             mappings_json=json.dumps(mappings_obj, ensure_ascii=False),
+            mode=action,
         ),
     )
 
@@ -775,16 +947,23 @@ def page_runs(
     user: Annotated[AuthUser, Depends(require_web_op("view_pipeline_runs"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ):
-    rows = conn.execute(
+    rows = refresh_recent_sync_runs(conn, limit=80)
+    connections = conn.execute(
         text(
-            "SELECT id, dagster_run_id, job_name, status, started_at, finished_at FROM pipeline_run_summary "
-            "ORDER BY id DESC LIMIT 80"
+            "SELECT id, integration_code, stream_name, sync_mode, cursor_field "
+            "FROM sync_state ORDER BY integration_code, stream_name"
         )
     ).mappings().all()
     return templates.TemplateResponse(
         request,
         "runs_list.html",
-        _ctx(request, user, rows=[dict(r) for r in rows]),
+        _ctx(
+            request,
+            user,
+            rows=rows,
+            connections=[dict(r) for r in connections],
+            can_trigger=user.can("edit_connections_builder"),
+        ),
     )
 
 
@@ -795,14 +974,66 @@ def page_run_detail(
     user: Annotated[AuthUser, Depends(require_web_op("view_pipeline_runs"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ):
-    row = conn.execute(
-        text("SELECT * FROM pipeline_run_summary WHERE id = :id"),
-        {"id": run_id},
-    ).mappings().first()
+    row = get_sync_run(conn, run_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Run не найден")
-    row_json = json.dumps(dict(row), ensure_ascii=False, indent=2, default=str)
-    return templates.TemplateResponse(request, "run_detail.html", _ctx(request, user, row_json=row_json))
+    row = refresh_sync_run_status(conn, row)
+    row_json = json.dumps(row, ensure_ascii=False, indent=2, default=str)
+    return templates.TemplateResponse(request, "run_detail.html", _ctx(request, user, row=row, row_json=row_json))
+
+
+@router.post("/runs/trigger")
+def page_run_trigger(
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_web_op("edit_connections_builder"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    connection_id: int = Form(),
+    note: str = Form(default=""),
+):
+    try:
+        resolved_id, integration_code, stream_name = resolve_connection(
+            conn,
+            connection_id=connection_id,
+            integration_code=None,
+            stream_name=None,
+        )
+    except SyncRunError as exc:
+        return templates.TemplateResponse(
+            request,
+            "run_detail.html",
+            _ctx(
+                request,
+                user,
+                row={"id": None, "status": "failed", "error_message": str(exc)},
+                row_json=json.dumps(
+                    {"error_code": "invalid_connection", "error_message": str(exc)},
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+            ),
+            status_code=422,
+        )
+
+    row = create_sync_run(
+        conn,
+        connection_id=resolved_id,
+        integration_code=integration_code,
+        stream_name=stream_name,
+        triggered_by=user.username,
+        note=note,
+    )
+    run_id = int(row["id"])
+    try:
+        launch = launch_dagster_run(
+            sync_run_id=run_id,
+            integration_code=integration_code,
+            stream_name=stream_name,
+            triggered_by=user.username,
+        )
+        mark_sync_run_running(conn, run_id=run_id, dagster_run_id=launch.run_id)
+    except SyncRunError as exc:
+        mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
+    return RedirectResponse(f"/app/runs/{run_id}", status_code=303)
 
 
 @router.get("/pipeline/graph")
@@ -874,36 +1105,87 @@ def page_export_csv(
     conn: Annotated[Connection, Depends(get_conn)],
     limit: int = 5000,
 ):
-    t = warehouse_table_sql()
     lim = max(1, min(limit, 5000))
-    rows = conn.execute(
-        text(
-            f"SELECT source_system, source_record_id, event_datetime, amount, amount_rub, currency_code, "
-            f"channel, status, loaded_at FROM {t} ORDER BY loaded_at DESC NULLS LAST LIMIT :lim"
-        ),
-        {"lim": lim},
-    ).mappings().all()
-    cols = [
-        "source_system",
-        "source_record_id",
-        "event_datetime",
-        "amount",
-        "amount_rub",
-        "currency_code",
-        "channel",
-        "status",
-        "loaded_at",
-    ]
+    rows = _fetch_canonical_sales_rows(conn, limit=lim)
+    cols = _canonical_sales_columns()
     buf = io.StringIO()
     w = csv.writer(buf)
     w.writerow(cols)
     for r in rows:
-        w.writerow([r[c] for c in cols])
+        w.writerow([_safe_export_value(r.get(c)) for c in cols])
     data = buf.getvalue()
     return StreamingResponse(
         iter([data]),
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="canonical_sales.csv"'},
+    )
+
+
+@router.get("/warehouse/download.json")
+def page_export_json(
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_web_op("export_sales_csv"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    limit: int = 5000,
+):
+    lim = max(1, min(limit, 5000))
+    rows = _fetch_canonical_sales_rows(conn, limit=lim)
+    payload = [{k: _safe_export_value(v) for k, v in r.items()} for r in rows]
+    data = json.dumps(payload, ensure_ascii=False, indent=2)
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/json; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="canonical_sales.json"'},
+    )
+
+
+@router.get("/warehouse/download.xml")
+def page_export_xml(
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_web_op("export_sales_csv"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    limit: int = 5000,
+):
+    lim = max(1, min(limit, 5000))
+    rows = _fetch_canonical_sales_rows(conn, limit=lim)
+    root = ET.Element("canonical_sales")
+    for r in rows:
+        row_el = ET.SubElement(root, "row")
+        for col in _canonical_sales_columns():
+            cell = ET.SubElement(row_el, col)
+            value = _safe_export_value(r.get(col))
+            cell.text = "" if value is None else str(value)
+    data = ET.tostring(root, encoding="utf-8", xml_declaration=True)
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/xml; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="canonical_sales.xml"'},
+    )
+
+
+@router.get("/warehouse/download.xlsx")
+def page_export_xlsx(
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_web_op("export_sales_csv"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    limit: int = 5000,
+):
+    lim = max(1, min(limit, 5000))
+    rows = _fetch_canonical_sales_rows(conn, limit=lim)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "canonical_sales"
+    cols = _canonical_sales_columns()
+    ws.append(cols)
+    for r in rows:
+        ws.append([_safe_export_value(r.get(c)) for c in cols])
+    buf = io.BytesIO()
+    wb.save(buf)
+    data = buf.getvalue()
+    return StreamingResponse(
+        iter([data]),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="canonical_sales.xlsx"'},
     )
 
 
@@ -999,10 +1281,27 @@ def page_norm(
             "FROM normalization_issue ORDER BY id DESC LIMIT 100"
         )
     ).mappings().all()
+    t = typed_table_sql()
+    fix_sql = text(
+        f"SELECT elem->>'action' AS action, elem->>'field' AS field, COUNT(*)::bigint AS cnt "
+        f"FROM {t}, "
+        f"LATERAL jsonb_array_elements(COALESCE(_ingest_meta->'changes', '[]'::jsonb)) AS elem "
+        f"WHERE elem->>'action' IS NOT NULL AND elem->>'action' != '' "
+        f"GROUP BY 1, 2 ORDER BY cnt DESC LIMIT 100"
+    )
+    try:
+        fix_rows = conn.execute(fix_sql).mappings().all()
+    except Exception:
+        fix_rows = []
     return templates.TemplateResponse(
         request,
         "monitoring_norm.html",
-        _ctx(request, user, rows=[dict(r) for r in rows]),
+        _ctx(
+            request,
+            user,
+            rows=[dict(r) for r in rows],
+            fix_stats=[dict(r) for r in fix_rows],
+        ),
     )
 
 

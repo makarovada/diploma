@@ -9,7 +9,7 @@ from typing import Any, Iterator
 import pandas as pd
 
 from datanorma.config import get_settings
-from datanorma.core.airbyte_protocol import AirbyteCatalog, SyncMode
+from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
 from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
@@ -72,21 +72,21 @@ class OneCSource(BaseSource):
         except Exception as exc:
             return SourceCheckResult(ok=False, message=str(exc), details={"path": str(path)})
 
-    def discover(self) -> AirbyteCatalog:
+    def discover(self) -> IngestCatalog:
         path, _mode = self._resolve_path()
         if not path.is_file():
             raise FileNotFoundError(f"Файл выгрузки 1С не найден: {path}")
         df = _read_1c_table(path)
         records = df.head(200).fillna("").to_dict(orient="records")
         schema = records_to_json_schema(records)
-        stream = self.airbyte_stream(
+        stream = self.ingest_stream(
             "orders",
             schema,
             sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
             default_cursor_field=None,
             source_defined_cursor=False,
         )
-        return AirbyteCatalog(streams=[stream])
+        return IngestCatalog(streams=[stream])
 
     def read(
         self,

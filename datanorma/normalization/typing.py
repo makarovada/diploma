@@ -122,8 +122,8 @@ def cast_rows_to_typed(rows: list[dict[str, Any]], canonical_schema: dict[str, A
                 if change.get("action") == "cast_error":
                     stats["cast_errors"] += 1
 
-        typed["_airbyte_extracted_at"] = _to_datetime(row.get("_airbyte_extracted_at"))
-        typed["_airbyte_meta"] = {"changes": changes}
+        typed["_ingest_extracted_at"] = _to_datetime(row.get("_ingest_extracted_at"))
+        typed["_ingest_meta"] = {"changes": changes}
         typed_rows.append(typed)
 
     stats["rows_out"] = len(typed_rows)
@@ -148,9 +148,19 @@ def typed_canonical_table(name: str | None = None) -> Table:
         Column("line_description", Text),
         Column("status", String(128)),
         Column("line_unit_normalized", String(64)),
+        Column("person_full_name", Text),
+        Column("person_family_name", String(128)),
+        Column("person_given_name", String(128)),
+        Column("person_patronymic", String(128)),
+        Column("contact_phone_e164", String(32)),
+        Column("contact_email", String(256)),
+        Column("country_code", String(2)),
+        Column("order_status_code", String(64)),
+        Column("payment_status_code", String(64)),
+        Column("shipment_status_code", String(64)),
         Column("cbr_rate_date", Date),
-        Column("_airbyte_extracted_at", DateTime(timezone=True), nullable=True),
-        Column("_airbyte_meta", JSONB, nullable=False),
+        Column("_ingest_extracted_at", DateTime(timezone=True), nullable=True),
+        Column("_ingest_meta", JSONB, nullable=False),
         Column("loaded_at", DateTime(timezone=True), nullable=False),
         PrimaryKeyConstraint("source_system", "source_record_id"),
     )
@@ -174,9 +184,9 @@ def upsert_typed_rows(engine: Engine, rows: list[dict[str, Any]], *, table_name:
                 index_elements=list(key_cols),
                 set_={col: getattr(excluded, col) for col in update_cols},
                 where=or_(
-                    table.c._airbyte_extracted_at.is_(None),
-                    excluded._airbyte_extracted_at.is_(None),
-                    excluded._airbyte_extracted_at >= table.c._airbyte_extracted_at,
+                    table.c._ingest_extracted_at.is_(None),
+                    excluded._ingest_extracted_at.is_(None),
+                    excluded._ingest_extracted_at >= table.c._ingest_extracted_at,
                 ),
             )
             conn.execute(stmt)

@@ -2,7 +2,7 @@
 {% block title %}Visual Mapping Editor{% endblock %}
 {% block main %}
 <h1 class="ab-page-title">Visual Mapping Editor</h1>
-<p class="ab-page-desc">No-code редактор mapping-полей. В прототипе изменения не пишутся на диск, но вы сразу видите YAML, который отправится.</p>
+<p class="ab-page-desc">No-code редактор mapping-полей с сохранением в БД (draft/published).</p>
 <p class="ab-page-desc">Файл: <code>{{ path }}</code></p>
 {% if note %}<p class="ab-badge ab-badge-ok">{{ note }}</p>{% endif %}
 
@@ -27,8 +27,15 @@
     <div class="ab-card">
       <h3 style="margin-top:0;">Generated YAML</h3>
       <form method="post" @submit="syncYaml()">
+        <div style="display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:.5rem;">
+          <input class="ab-input" name="profile_name" value="default" placeholder="profile_name"/>
+          <input class="ab-input" name="change_note" placeholder="change_note"/>
+        </div>
         <textarea class="ab-input" name="yaml_content" x-model="yamlText" rows="22" style="width:100%;font-family:ui-monospace,monospace;"></textarea>
-        <button class="ab-btn ab-btn-primary" style="margin-top:0.7rem;" type="submit">Отправить (preview only)</button>
+        <div style="display:flex;gap:.5rem;margin-top:0.7rem;">
+          <button class="ab-btn" type="submit" name="action" value="save_draft">Save draft</button>
+          <button class="ab-btn ab-btn-primary" type="submit" name="action" value="publish_activate">Publish + activate</button>
+        </div>
       </form>
     </div>
   </div>

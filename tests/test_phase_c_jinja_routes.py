@@ -11,6 +11,10 @@ def test_at_least_20_unique_app_paths() -> None:
     app = create_app()
     paths = {r.path for r in app.routes if isinstance(r, APIRoute) and r.path.startswith("/app/")}
     assert len(paths) >= 20, f"Ожидалось ≥20 путей /app/*, сейчас {len(paths)}"
+    assert "/app/warehouse/download.csv" in paths
+    assert "/app/warehouse/download.json" in paths
+    assert "/app/warehouse/download.xml" in paths
+    assert "/app/warehouse/download.xlsx" in paths
 
 
 def test_unauthenticated_app_dashboard_redirects() -> None:

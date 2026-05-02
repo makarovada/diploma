@@ -1,4 +1,4 @@
-"""Персистенция raw в таблицы raw_<source>_<stream>_staging и обновление sync_state (Airbyte-style)."""
+"""Персистенция raw в таблицы raw_<source>_<stream>_staging и обновление sync_state (Ingest-style)."""
 
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from sqlalchemy.engine import Connection, Engine
 from datanorma.ingest.cursor_filter import max_cursor_from_dict_rows, max_cursor_from_postings
 from datanorma.ingest.stream_config import parse_all_stream_configs
 from datanorma.normalization.to_canonical import load_source_mappings
-from datanorma.warehouse.sync_state_repo import build_airbyte_state_dict, ensure_phase1_schema
+from datanorma.warehouse.sync_state_repo import build_ingest_state_dict, ensure_phase1_schema
 
 _log = logging.getLogger(__name__)
 
@@ -32,7 +32,7 @@ def _oz_sql(table: str) -> Any:
     if table != OZ_TABLE:
         raise ValueError(f"unexpected ozon staging table: {table}")
     return text(
-        f"INSERT INTO {OZ_TABLE} (ingest_batch_id, payload_json, _airbyte_extracted_at, _airbyte_meta) "
+        f"INSERT INTO {OZ_TABLE} (ingest_batch_id, payload_json, _ingest_extracted_at, _ingest_meta) "
         "VALUES (:bid, CAST(:payload AS jsonb), :ext, CAST(:meta AS jsonb))"
     )
 
@@ -45,7 +45,7 @@ def _row_sql(table: str) -> Any:
     else:
         raise ValueError(f"unexpected tabular staging table: {table}")
     return text(
-        f"INSERT INTO {t} (ingest_batch_id, row_json, _airbyte_extracted_at, _airbyte_meta) "
+        f"INSERT INTO {t} (ingest_batch_id, row_json, _ingest_extracted_at, _ingest_meta) "
         "VALUES (:bid, CAST(:row AS jsonb), :ext, CAST(:meta AS jsonb))"
     )
 
@@ -217,18 +217,18 @@ def _persist_stream_state(
     else:
         new_cursor = max_cursor_from_dict_rows(tabular_rows or [], cursor_field)
 
-    airbyte_state = build_airbyte_state_dict(cursor=new_cursor, rows_emitted=rows_emitted, batch_id=batch_id)
+    ingest_state = build_ingest_state_dict(cursor=new_cursor, rows_emitted=rows_emitted, batch_id=batch_id)
     legacy_cv = _json_dumps({"cursor": new_cursor, "batch_id": batch_id, "rows": rows_emitted})
 
     sql = text(
         "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, "
-        "cursor_value, airbyte_state, last_success_at, updated_at) "
+        "cursor_value, ingest_state, last_success_at, updated_at) "
         "VALUES (:ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
         "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
         "sync_mode = EXCLUDED.sync_mode, "
         "cursor_field = EXCLUDED.cursor_field, "
         "cursor_value = EXCLUDED.cursor_value, "
-        "airbyte_state = EXCLUDED.airbyte_state, "
+        "ingest_state = EXCLUDED.ingest_state, "
         "last_success_at = NOW(), "
         "updated_at = NOW()"
     )
@@ -238,6 +238,6 @@ def _persist_stream_state(
         "sm": sync_mode,
         "cf": cursor_field,
         "cv": legacy_cv,
-        "ajs": _json_dumps(airbyte_state),
+        "ajs": _json_dumps(ingest_state),
     }
     conn.execute(sql, payload)

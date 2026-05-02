@@ -9,7 +9,7 @@ import httpx
 import yaml
 from pydantic import BaseModel, Field
 
-from datanorma.core.airbyte_protocol import AirbyteCatalog, SyncMode
+from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
 from datanorma.sources.base import BaseSource, SourceCheckResult
 from datanorma.sources.schema_inference import records_to_json_schema
 
@@ -151,7 +151,7 @@ def json_schema_from_openapi_response(spec: dict[str, Any], path: str, method: s
     return None
 
 
-def openapi_to_airbyte_json_schema(schema_node: dict[str, Any] | None) -> dict[str, Any]:
+def openapi_to_ingest_json_schema(schema_node: dict[str, Any] | None) -> dict[str, Any]:
     if not schema_node or not isinstance(schema_node, dict):
         return {}
     if schema_node.get("type") == "array" and "items" in schema_node:
@@ -215,7 +215,7 @@ class RestBuilderSource(BaseSource):
                 details={"stream": st0.name, "url": url},
             )
 
-    def discover(self) -> AirbyteCatalog:
+    def discover(self) -> IngestCatalog:
         openapi = self._load_openapi()
         streams_out = []
         headers = _auth_headers(self._cfg.auth)
@@ -226,7 +226,7 @@ class RestBuilderSource(BaseSource):
                 if openapi:
                     js = json_schema_from_openapi_response(openapi, st.path, st.method.lower())
                     if js:
-                        json_schema = openapi_to_airbyte_json_schema(js)  # type: ignore[assignment]
+                        json_schema = openapi_to_ingest_json_schema(js)  # type: ignore[assignment]
 
                 url = self._cfg.base_url.rstrip("/") + "/" + st.path.lstrip("/")
                 try:
@@ -250,7 +250,7 @@ class RestBuilderSource(BaseSource):
                     json_schema = {"type": "object", "properties": {}, "description": "empty sample"}
 
                 streams_out.append(
-                    self.airbyte_stream(
+                    self.ingest_stream(
                         st.name,
                         json_schema,
                         sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
@@ -258,7 +258,7 @@ class RestBuilderSource(BaseSource):
                         source_defined_cursor=False,
                     )
                 )
-        return AirbyteCatalog(streams=streams_out)
+        return IngestCatalog(streams=streams_out)
 
     def read(
         self,

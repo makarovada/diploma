@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Sign in — DataNorma</title>
-  <link rel="stylesheet" href="/ui/theme-airbyte.css" />
+  <link rel="stylesheet" href="/ui/theme-ingest.css" />
   <style>
     body.login-ab {
       margin: 0;
@@ -63,7 +63,7 @@
   <div class="login-card">
     <div class="logo-mark" aria-hidden="true"></div>
     <h1>Sign in to DataNorma</h1>
-    <p class="sub">Консоль в стиле <strong>Airbyte</strong>: Sources, Destinations, Connections. Демо: <code>seed_admin</code> / <code>AdminDemo2026</code>.</p>
+    <p class="sub">Консоль в стиле <strong>Ingest</strong>: Sources, Destinations, Connections. Демо: <code>seed_admin</code> / <code>AdminDemo2026</code>.</p>
     {% if error %}<p class="err">{{ error }}</p>{% endif %}
     <form method="post" action="/app/login">
       <input type="hidden" name="next" value="{{ next }}" />

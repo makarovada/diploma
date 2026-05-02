@@ -4,16 +4,16 @@
 <h1 class="ab-page-title">About &amp; FAQ</h1>
 <p class="ab-page-desc"><strong>DataNorma</strong> — дипломный прототип EL-платформы с упором на российские источники (Ozon, 1С, Sheets) и нормализацию под аналитику.</p>
 
-<h2 class="ab-page-title" style="font-size:1.1rem;">Сходство с Airbyte</h2>
-<p class="meta">Визуально и по смыслу UI опирается на <strong>Airbyte</strong> (open-source EL):</p>
+<h2 class="ab-page-title" style="font-size:1.1rem;">Сходство с Ingest</h2>
+<p class="meta">Визуально и по смыслу UI опирается на <strong>Ingest</strong> (open-source EL):</p>
 <ul class="meta" style="line-height:1.6;">
   <li><strong>Sources</strong> — коннекторы и каталог источников; карточка источника и sync state.</li>
   <li><strong>Destinations</strong> — в прототипе одно назначение, PostgreSQL (staging + витрина <code>canonical_sales</code>).</li>
   <li><strong>Connections</strong> — логические связи source→destination, статусы и история sync jobs.</li>
   <li><strong>Settings / Secrets</strong> — параметры и маскирование (как configuration with secrets).</li>
-  <li><strong>Normalization</strong> — у Airbyte dbt/typing; здесь — YAML-маппинг, fuzzy, ЦБ РФ, каноническая схема.</li>
+  <li><strong>Normalization</strong> — у Ingest dbt/typing; здесь — YAML-маппинг, fuzzy, ЦБ РФ, каноническая схема.</li>
 </ul>
-<p class="meta">Отличия: оркестрация через <strong>Dagster</strong> (отдельная «операционная консоль»), а не встроенный job-runner Airbyte; нет отдельного marketplace коннекторов — фиксированный набор + конфиг.</p>
+<p class="meta">Отличия: оркестрация через <strong>Dagster</strong> (отдельная «операционная консоль»), а не встроенный job-runner Ingest; нет отдельного marketplace коннекторов — фиксированный набор + конфиг.</p>
 
 <h2 class="ab-page-title" style="font-size:1.1rem;">Роли</h2>
 <ul>

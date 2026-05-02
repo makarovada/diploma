@@ -14,3 +14,10 @@ def warehouse_table_sql() -> str:
     if not _SAFE_IDENT.match(t):
         return "canonical_sales"
     return t
+
+
+def typed_table_sql() -> str:
+    t = (get_settings().datanorma_typed_table or "typed_canonical_sales").strip() or "typed_canonical_sales"
+    if not _SAFE_IDENT.match(t):
+        return "typed_canonical_sales"
+    return t

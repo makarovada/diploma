@@ -1,1 +1,1 @@
-"""Режимы синхронизации и курсоры (аналог incremental state в Airbyte)."""
+"""Режимы синхронизации и курсоры (аналог incremental state в Ingest)."""

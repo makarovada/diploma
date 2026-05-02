@@ -43,7 +43,7 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "view_pipeline_graph_static": ALL_ROLES,
     "assign_user_roles": (ROLE_PLATFORM_ADMIN,),
     "edit_schedule_cron": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
-    # Веб-консоль (ориентир Airbyte: Connections / Destinations)
+    # Веб-консоль (ориентир Ingest: Connections / Destinations)
     "view_connections_overview": ALL_ROLES,
     "edit_connections_builder": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_destinations_page": ALL_ROLES,
@@ -67,7 +67,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "view_sync_state": "Состояние sync_state (курсоры)",
     "view_normalization_issues": "События normalization_issue",
     "view_mapping_profiles": "Профили mapping_profile",
-    "edit_mapping_profiles": "Изменение профилей маппинга (заглушка API)",
+    "edit_mapping_profiles": "Изменение/публикация/активация профилей маппинга",
     "view_dim_sources": "Справочник источников (dim_source_system)",
     "configure_new_source": "Мастер New Source (check / discover коннектора)",
     "view_dim_currencies": "Справочник валют (dim_currency)",
@@ -83,7 +83,7 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "view_pipeline_graph_static": "Статическая схема пайплайна",
     "assign_user_roles": "Назначение ролей пользователю",
     "edit_schedule_cron": "Настройка cron расписания (текстом)",
-    "view_connections_overview": "Обзор подключений (как Connections в Airbyte)",
+    "view_connections_overview": "Обзор подключений (как Connections в Ingest)",
     "edit_connections_builder": "No-code редактор Connections (stream/sync/cursor)",
     "view_destinations_page": "Назначения данных / warehouse (как Destinations)",
     "manage_connections_api": "API v1: управление connections",

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>DataNorma — API console (терминология как в Airbyte)</title>
+  <title>DataNorma — API console (терминология как в Ingest)</title>
   <style>
     :root { --bg: #0f1419; --panel: #1a2332; --text: #e7ecf3; --muted: #8b9bb4; --accent: #3d8bfd; --ok: #3ecf8e; --err: #f87171; }
     * { box-sizing: border-box; }
@@ -89,8 +89,9 @@
       { id: 10, title: "Staging: образец Sheets", op: "view_staging_sheet_sample", path: "/api/data/staging-sheet-sample" },
       { id: 11, title: "Состояние интеграций (sync_state)", op: "view_sync_state", path: "/api/data/sync-state" },
       { id: 12, title: "Нормализация: issues", op: "view_normalization_issues", path: "/api/data/normalization-issues?limit=40" },
+      { id: 22, title: "Нормализация: fix-stats (typed)", op: "view_normalization_issues", path: "/api/data/normalization-fix-stats?limit=40" },
       { id: 13, title: "Профили маппинга", op: "view_mapping_profiles", path: "/api/data/mapping-profiles" },
-      { id: 14, title: "Изменение маппинга (заглушка)", op: "edit_mapping_profiles", post: "/api/data/mapping-profiles/stub", render: (d) => "<pre>" + JSON.stringify(d, null, 2) + "</pre>" },
+      { id: 14, title: "Изменение маппинга (draft API)", op: "edit_mapping_profiles", post: "/api/data/mapping-profiles/draft", body: { workspace_code: "main", source_type: "1c", stream_name: "orders", profile_name: "default", rules_json: { handler: "column_map", stream: "orders", fields: { "Номер": "source_record_id" } } }, render: (d) => "<pre>" + JSON.stringify(d, null, 2) + "</pre>" },
       { id: 15, title: "Справочник источников", op: "view_dim_sources", path: "/api/data/dim-sources" },
       { id: 16, title: "Справочник валют", op: "view_dim_currencies", path: "/api/data/dim-currencies" },
       { id: 17, title: "Админ: пользователи", op: "view_admin_users", path: "/api/admin/users" },

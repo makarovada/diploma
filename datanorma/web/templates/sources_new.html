@@ -2,7 +2,7 @@
 {% block title %}New Source — DataNorma{% endblock %}
 {% block main %}
 <h1 class="ab-page-title">New Source</h1>
-<p class="ab-page-desc">Мастер в духе Airbyte: выберите тип коннектора и выполните <strong>check</strong> / <strong>discover</strong> (каталог + JSON Schema потоков). Секреты по-прежнему задаются в <code>.env</code> / Dagster; для REST builder — через <code>auth.env_var</code>.</p>
+<p class="ab-page-desc">Мастер в духе Ingest: выберите тип коннектора и выполните <strong>check</strong> / <strong>discover</strong> (каталог + JSON Schema потоков). Секреты по-прежнему задаются в <code>.env</code> / Dagster; для REST builder — через <code>auth.env_var</code>.</p>
 
 {% if error %}
 <p class="ab-badge ab-badge-warn" style="display:inline-block;margin-bottom:1rem;">Ошибка: {{ error }}</p>

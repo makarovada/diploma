@@ -56,7 +56,7 @@ def test_map_tabular_1c_style_row() -> None:
 def test_dedup_same_source_record_id(monkeypatch: pytest.MonkeyPatch) -> None:
     import datanorma.normalization.to_canonical as tc
 
-    def _noop_enrich(rows, fallback_rate_date=None):
+    def _noop_enrich(rows, fallback_rate_date=None, engine=None):
         return [dict(r) for r in rows], {"cbr_dates": []}
 
     monkeypatch.setattr(tc, "enrich_canonical_rows", _noop_enrich)
@@ -119,7 +119,10 @@ def test_build_merges_three_sources(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         tc,
         "enrich_canonical_rows",
-        lambda rows, fallback_rate_date=None: ([dict(r) for r in rows], {"cbr_dates": []}),
+        lambda rows, fallback_rate_date=None, engine=None: (
+            [dict(r) for r in rows],
+            {"cbr_dates": []},
+        ),
     )
 
     raw_ozon = {

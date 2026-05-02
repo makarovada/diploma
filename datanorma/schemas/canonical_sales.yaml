@@ -57,3 +57,37 @@ fields:
     type: string
     nullable: true
     description: Сырая ед. изм. из источника (опционально, через маппинг).
+  person_full_name:
+    type: string
+    nullable: true
+    description: Полное ФИО (нормализованное).
+  person_family_name:
+    type: string
+    nullable: true
+  person_given_name:
+    type: string
+    nullable: true
+  person_patronymic:
+    type: string
+    nullable: true
+  contact_phone_e164:
+    type: string
+    nullable: true
+    description: Телефон в формате E.164 (+7…).
+  contact_email:
+    type: string
+    nullable: true
+  country_code:
+    type: string
+    nullable: true
+    description: ISO 3166-1 alpha-2.
+  order_status_code:
+    type: string
+    nullable: true
+    description: Канонический код статуса заказа (dim_status_map).
+  payment_status_code:
+    type: string
+    nullable: true
+  shipment_status_code:
+    type: string
+    nullable: true

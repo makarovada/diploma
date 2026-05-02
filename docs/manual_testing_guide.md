@@ -1,12 +1,12 @@
 # DataNorma: руководство по ручному тестированию
 
-Документ описывает единый набор ручных проверок для MVP-платформы DataNorma (аналог Airbyte для SMB в РФ).
+Документ описывает единый набор ручных проверок для MVP-платформы DataNorma (аналог Ingest для SMB в РФ).
 
 ## 1. Цель документа
 
 - Зафиксировать полный функциональный охват ручного тестирования.
 - Дать воспроизводимый сценарий smoke/regression проверки после изменений.
-- Синхронизировать терминологию с `README.md` и `docs/comparison_airbyte.md`.
+- Синхронизировать терминологию с `README.md` и `docs/comparison_ingest.md`.
 
 ## 2. Контекст и границы MVP
 
@@ -18,8 +18,8 @@ DataNorma в текущей версии:
 - использует ролевую модель доступа (RBAC) и JWT.
 
 Ограничения текущего этапа:
-- `POST /api/v1/syncs/trigger` реализован как MVP-stub и не заменяет полный оркестрационный контур;
-- редактор маппингов в UI предназначен для preview/валидации и не коммитит изменения в файлы репозитория;
+- `POST /api/v1/syncs/trigger` запускает реальный run и возвращает `run_id`; для актуального статуса используйте polling `GET /api/v1/syncs/{run_id}/status`;
+- редактор маппингов в UI сохраняет версии правил в БД (draft/published/active), YAML используется как fallback/import;
 - основной сценарий загрузки ориентирован на PostgreSQL.
 
 ## 3. Предварительные условия
@@ -299,7 +299,9 @@ DataNorma в текущей версии:
 Ожидаемо:
 - проверки видны и интерпретируемы;
 - история запусков отображается;
-- журнал нормализации доступен без ошибок.
+- журнал нормализации доступен без ошибок;
+- на `/app/monitoring/normalization` видна вторая секция — агрегаты исправлений typed-слоя (`action` / `field` из `_ingest_meta.changes`);
+- `GET /api/data/normalization-fix-stats?limit=50` возвращает JSON с полем `rows` (после материализации `typed_canonical_sales` возможны ненулевые счётчики).
 
 ## 6. Рекомендуемый smoke-набор после изменений
 
@@ -316,8 +318,10 @@ DataNorma в текущей версии:
 4. Проверить:
    - `/api/data/staging-counts`
    - `/api/data/sales-summary`
+   - `/api/data/normalization-fix-stats`
    - `/app/warehouse/sales`
    - `/app/warehouse/download.csv`
+   - `/app/monitoring/normalization` (issues + агрегаты fixes)
 5. Проверить RBAC:
    - integrator не имеет admin-доступа;
    - analyst не может изменять конфигурации.
@@ -331,13 +335,13 @@ DataNorma в текущей версии:
 ## 7. Связанные документы
 
 - Карта проекта и runbook: `README.md`
-- Сравнение с Airbyte: `docs/comparison_airbyte.md`
+- Сравнение с Ingest: `docs/comparison_ingest.md`
 - Маршруты web UI: `docs/phase_c_routes.md`
 - Текст для ВКР по RBAC: `docs/vkr_rbac_text.md`
 # DataNorma: manual testing guide and full functionality list
 
 Business context (aligned with `README.md`):
-- DataNorma is an Airbyte-like data integration and normalization service for SMB teams in Russia.
+- DataNorma is an Ingest-like data integration and normalization service for SMB teams in Russia.
 - The current version is an MVP with production-style building blocks: connectors, staged ingestion, canonical modeling, warehouse load, web/API layer, and RBAC.
 
 This document contains:
@@ -453,8 +457,12 @@ Demo users:
 - `GET /api/data/staging-sheet-sample`
 - `GET /api/data/sync-state`
 - `GET /api/data/normalization-issues`
+- `GET /api/data/normalization-fix-stats`
 - `GET /api/data/mapping-profiles`
-- `POST /api/data/mapping-profiles/stub`
+- `POST /api/data/mapping-profiles/draft`
+- `POST /api/data/mapping-profiles/publish`
+- `POST /api/data/mapping-profiles/activate`
+- `POST /api/data/mapping-profiles/rollback`
 - `GET /api/data/dim-sources`
 - `GET /api/data/dim-currencies`
 - `GET /api/data/pipeline-runs`
@@ -470,7 +478,9 @@ Demo users:
 - `GET /api/v1/connections`
 - `POST /api/v1/connections`
 - `GET /api/v1/syncs`
-- `POST /api/v1/syncs/trigger` (declarative MVP stub; does not execute full orchestration cycle by itself)
+- `POST /api/v1/syncs/trigger` (creates `sync_run` and launches Dagster run)
+- `GET /api/v1/syncs/{run_id}`
+- `GET /api/v1/syncs/{run_id}/status`
 - `GET /api/v1/workspaces`
 - `POST /api/v1/workspaces`
 
@@ -491,7 +501,7 @@ Demo users:
 - `/app/connections` (GET/POST)
 - `/app/connections/sample/{code}`
 - `/app/mappings`
-- `/app/mappings/editor` (GET/POST, non-persistent preview)
+- `/app/mappings/editor` (GET/POST, persisted draft/publish flow)
 
 4. Monitor section
 - `/app/runs`
@@ -711,7 +721,7 @@ Expected:
 - allowed pages render successfully;
 - forbidden pages show access denied (`403`);
 - form changes are applied where persistence is intended;
-- mapping editor displays note that changes are not saved to disk.
+- mapping editor creates new draft versions and supports publish/activate.
 
 ### 3.15 RBAC matrix verification
 
@@ -748,7 +758,9 @@ Steps:
 Expected:
 - checks are visible and meaningful;
 - run history is visible;
-- normalization issues page shows data (or empty list without errors).
+- normalization issues page shows data (or empty list without errors);
+- the same page lists typed-layer fix aggregates (`action` / `field` from `_ingest_meta.changes`) when data exists;
+- `GET /api/data/normalization-fix-stats` returns `rows` (may be empty before typed layer is loaded).
 
 ## 4) Integration-focused regression pack (recommended smoke run)
 
@@ -763,12 +775,18 @@ Run this compact sequence after any important change:
    - `typed_canonical_sales`
    - `warehouse_sales`
    - `dbt_run` (if enabled)
-4. Verify:
+4. Trigger orchestration from UI/API:
+   - `/app/runs` form `Запустить синхронизацию`;
+   - or `POST /api/v1/syncs/trigger`.
+5. Verify:
    - `/api/data/staging-counts`
    - `/api/data/sales-summary`
+   - `/api/data/normalization-fix-stats`
+   - `/api/v1/syncs/{run_id}/status`
    - `/app/warehouse/sales`
    - `/app/warehouse/download.csv`
-5. Verify RBAC:
+   - `/app/monitoring/normalization`
+6. Verify RBAC:
    - `seed_integrator` can edit connections but cannot open admin users;
    - `seed_analyst` can view warehouse but cannot modify connections/config.
 
@@ -781,6 +799,6 @@ Pass criteria:
 ## 5) Notes on MVP boundaries
 
 - Primary destination is PostgreSQL at this stage.
-- Mapping editor page provides preview flow and validation, but does not persist YAML changes to repository files.
+- Mapping editor page persists mapping versions in DB (draft/published/active); YAML file remains fallback/import.
 - Some product-shaped API routes are intentionally lightweight in MVP and should be validated as such during acceptance.
 

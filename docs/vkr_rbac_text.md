@@ -66,7 +66,7 @@
 - `README.md`
 - `docs/manual_testing_guide.md`
 - `docs/phase_c_routes.md`
-- `docs/comparison_airbyte.md`
+- `docs/comparison_ingest.md`
 # Текст для ВКР: роли, доступ и UI-контур
 
 Материал для раздела ВКР о разграничении доступа и пользовательском контуре платформы DataNorma.
@@ -135,4 +135,4 @@
 - `README.md`
 - `docs/manual_testing_guide.md`
 - `docs/phase_c_routes.md`
-- `docs/comparison_airbyte.md`
+- `docs/comparison_ingest.md`

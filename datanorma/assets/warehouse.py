@@ -6,7 +6,7 @@ from datanorma.warehouse.load import count_canonical_sales, load_canonical_sales
 
 @dg.asset(
     group_name="warehouse",
-    description="Загрузка витрины canonical_sales (UPSERT; обновление только если _airbyte_loaded_at не старее существующей).",
+    description="Загрузка витрины canonical_sales (UPSERT; обновление только если _ingest_loaded_at не старее существующей).",
 )
 def warehouse_sales(typed_canonical_sales: dict, normalized_orders: dict, postgres: PostgresResource) -> dict:
     rows = typed_canonical_sales.get("rows") or normalized_orders.get("rows") or []

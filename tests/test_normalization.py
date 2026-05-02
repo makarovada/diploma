@@ -56,6 +56,19 @@ def test_fuzzy_column_lookup() -> None:
     assert v == "2025-01-10"
 
 
+def test_map_tabular_row_maps_contact_and_country_fields() -> None:
+    row = {"mobile": "+7 900 1112233", "mail": "a@b.co", "ctry": "RU"}
+    field_map = {
+        "mobile": "contact_phone_e164",
+        "mail": "contact_email",
+        "ctry": "country_code",
+    }
+    mapped = _map_tabular_row(row, field_map, "demo", fuzzy_threshold=0)
+    assert mapped["contact_phone_e164"] == "+7 900 1112233"
+    assert mapped["contact_email"] == "a@b.co"
+    assert mapped["country_code"] == "RU"
+
+
 def test_enrich_amount_rub_monkeypatch(monkeypatch: pytest.MonkeyPatch) -> None:
     import datanorma.normalization.enrich as enrich_mod
 

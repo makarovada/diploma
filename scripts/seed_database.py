@@ -36,7 +36,10 @@ def _clear_seed_rows(conn: Connection) -> None:
     conn.execute(text("DELETE FROM normalization_issue WHERE issue_type = 'seed_demo'"))
     conn.execute(text("DELETE FROM pipeline_run_summary WHERE job_name = 'seed_daily_refresh'"))
     conn.execute(text("DELETE FROM sync_state WHERE integration_code LIKE 'seed_%'"))
-    conn.execute(text("DELETE FROM mapping_profile WHERE name LIKE 'Seed %'"))
+    try:
+        conn.execute(text("DELETE FROM mapping_profile_legacy WHERE name LIKE 'Seed %'"))
+    except Exception:
+        pass
     conn.execute(text("DELETE FROM integration_config WHERE config_key LIKE 'seed.%'"))
     conn.execute(
         text("DELETE FROM raw_google_sheet_orders_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH}
@@ -78,6 +81,40 @@ def seed_reference(conn: Connection) -> None:
                 "INSERT INTO dim_currency (code, name) VALUES (:c, :n) ON CONFLICT (code) DO NOTHING"
             ),
             {"c": code, "n": name},
+        )
+    countries = [
+        ("RU", "Россия"),
+        ("KZ", "Казахстан"),
+        ("BY", "Беларусь"),
+    ]
+    for code, name in countries:
+        conn.execute(
+            text("INSERT INTO dim_country (code, name) VALUES (:c, :n) ON CONFLICT (code) DO NOTHING"),
+            {"c": code, "n": name},
+        )
+    units = [
+        ("pcs", "Штуки"),
+        ("kg", "Килограмм"),
+        ("m", "Метр"),
+    ]
+    for code, name in units:
+        conn.execute(
+            text("INSERT INTO dim_unit (code, name) VALUES (:c, :n) ON CONFLICT (code) DO NOTHING"),
+            {"c": code, "n": name},
+        )
+    status_rows = [
+        ("order", "ozon", "delivered", "order_completed"),
+        ("order", "ozon", "cancelled", "order_cancelled"),
+        ("order", "1c", "Оплачен", "order_paid"),
+        ("order", "google_sheet", "paid", "order_paid"),
+    ]
+    for dim, src, raw, canon in status_rows:
+        conn.execute(
+            text(
+                "INSERT INTO dim_status_map (dimension, source_system, raw_status, canonical_code) "
+                "VALUES (:d, :s, :r, :c) ON CONFLICT (dimension, source_system, raw_status) DO NOTHING"
+            ),
+            {"d": dim, "s": src, "r": raw, "c": canon},
         )
 
 
@@ -143,28 +180,34 @@ def seed_config_and_meta(conn: Connection) -> None:
             {"k": k, "v": v, "s": sec},
         )
     for i in range(4):
-        conn.execute(
-            text(
-                "INSERT INTO mapping_profile (name, version, notes) VALUES (:n, :ver, :notes)"
-            ),
-            {
-                "n": f"Seed profile {i + 1}",
-                "ver": 1,
-                "notes": f"Демо-профиль маппинга #{i + 1}",
-            },
-        )
+        try:
+            conn.execute(
+                text(
+                    "INSERT INTO mapping_profile_legacy (name, version, notes) VALUES (:n, :ver, :notes)"
+                ),
+                {
+                    "n": f"Seed profile {i + 1}",
+                    "ver": 1,
+                    "notes": f"Демо-профиль маппинга #{i + 1}",
+                },
+            )
+        except Exception:
+            pass
     syncs = [
         ("seed_ozon", '{"page": 12}'),
         ("seed_1c", "2024-12-31T23:59:59"),
         ("seed_sheet", "row:840"),
     ]
+    ajs = '{"cursor": null, "rows_emitted": 0, "edited_via": "seed"}'
     for code, cursor in syncs:
+        cv = json.dumps({"cursor": cursor, "seed": True}, ensure_ascii=False)
         conn.execute(
             text(
-                "INSERT INTO sync_state (integration_code, cursor_value, last_success_at) "
-                "VALUES (:c, :cur, NOW())"
+                "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, last_success_at, updated_at) "
+                "VALUES (:c, 'orders', 'full_refresh', NULL, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
+                "ON CONFLICT (integration_code, stream_name) DO UPDATE SET cursor_value = EXCLUDED.cursor_value, updated_at = NOW()"
             ),
-            {"c": code, "cur": cursor},
+            {"c": code, "cv": cv, "ajs": ajs},
         )
 
 
@@ -172,7 +215,7 @@ def seed_staging_and_issues(conn: Connection) -> None:
     oz = {"posting_number": "SEED-OZ-1", "status": "delivered", "items": [{"sku": "X", "qty": 1}]}
     conn.execute(
         text(
-            "INSERT INTO raw_ozon_postings_staging (ingest_batch_id, payload_json, _airbyte_extracted_at, _airbyte_meta) "
+            "INSERT INTO raw_ozon_postings_staging (ingest_batch_id, payload_json, _ingest_extracted_at, _ingest_meta) "
             "VALUES (:b, CAST(:j AS jsonb), NOW(), CAST(:m AS jsonb))"
         ),
         {"b": _BATCH, "j": json.dumps(oz), "m": json.dumps({"seed": True})},
@@ -181,7 +224,7 @@ def seed_staging_and_issues(conn: Connection) -> None:
         row = {"order_id": f"S1C-{i}", "sum": 100 + i}
         conn.execute(
             text(
-                "INSERT INTO raw_1c_orders_staging (ingest_batch_id, row_json, _airbyte_extracted_at, _airbyte_meta) "
+                "INSERT INTO raw_1c_orders_staging (ingest_batch_id, row_json, _ingest_extracted_at, _ingest_meta) "
                 "VALUES (:b, CAST(:j AS jsonb), NOW(), CAST(:m AS jsonb))"
             ),
             {"b": _BATCH, "j": json.dumps(row), "m": json.dumps({"seed": True})},
@@ -190,7 +233,7 @@ def seed_staging_and_issues(conn: Connection) -> None:
         row = {"sheet_row": i, "client": f"Client {i}"}
         conn.execute(
             text(
-                "INSERT INTO raw_google_sheet_orders_staging (ingest_batch_id, row_json, _airbyte_extracted_at, _airbyte_meta) "
+                "INSERT INTO raw_google_sheet_orders_staging (ingest_batch_id, row_json, _ingest_extracted_at, _ingest_meta) "
                 "VALUES (:b, CAST(:j AS jsonb), NOW(), CAST(:m AS jsonb))"
             ),
             {"b": _BATCH, "j": json.dumps(row), "m": json.dumps({"seed": True})},
@@ -230,9 +273,13 @@ def seed_canonical_bulk(conn: Connection) -> None:
         "INSERT INTO canonical_sales ("
         "source_system, source_record_id, event_datetime, amount, amount_rub, currency_code, "
         "counterparty_name, channel, line_description, status, cbr_rate_date, "
-        "line_unit_normalized, normalization_meta, loaded_at, _airbyte_loaded_at"
+        "line_unit_normalized, person_full_name, person_family_name, person_given_name, person_patronymic, "
+        "contact_phone_e164, contact_email, country_code, order_status_code, payment_status_code, shipment_status_code, "
+        "normalization_meta, loaded_at, _ingest_loaded_at"
         ") VALUES ("
-        ":ss, :sid, :ed, :am, :ar, :cc, :cp, :ch, :ld, :st, :cbr, :lu, CAST(:nm AS jsonb), :la, :ala)"
+        ":ss, :sid, :ed, :am, :ar, :cc, :cp, :ch, :ld, :st, :cbr, :lu, "
+        ":pfn, :pfam, :pgiv, :ppat, :cph, :cem, :ctry, :ost, :pst, :sst, "
+        "CAST(:nm AS jsonb), :la, :ala)"
     )
     base_date = date(2024, 6, 1)
     for i in range(520):
@@ -255,6 +302,16 @@ def seed_canonical_bulk(conn: Connection) -> None:
                 "st": "paid",
                 "cbr": d,
                 "lu": "шт" if i % 3 == 0 else None,
+                "pfn": None,
+                "pfam": None,
+                "pgiv": None,
+                "ppat": None,
+                "cph": None,
+                "cem": None,
+                "ctry": "RU" if i % 5 == 0 else None,
+                "ost": None,
+                "pst": None,
+                "sst": None,
                 "nm": json.dumps(meta),
                 "la": loaded_at,
                 "ala": loaded_at,

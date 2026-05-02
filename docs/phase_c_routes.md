@@ -4,7 +4,7 @@
 
 ## 1. Контекст
 
-- UI использует терминологию, близкую к Airbyte: `Sources`, `Destinations`, `Connections`, `Syncs`.
+- UI использует терминологию, близкую к Ingest: `Sources`, `Destinations`, `Connections`, `Syncs`.
 - Оркестрация вынесена в Dagster; из UI доступна ссылка-переход.
 - Доступ к страницам контролируется RBAC-матрицей.
 
@@ -31,15 +31,18 @@
 | `POST /app/connections` | Изменение конфигурации connection |
 | `GET /app/connections/sample/{code}` | Просмотр sample-данных источника |
 | `GET /app/mappings` | Профили маппинга |
-| `GET /app/mappings/editor` | Редактор маппинга (preview) |
-| `POST /app/mappings/editor` | Валидация/предпросмотр маппинга |
+| `GET /app/mappings/editor` | Редактор маппинга (draft/publish) |
+| `POST /app/mappings/editor` | Сохранение draft / publish+activate |
+| `POST /app/mappings/activate` | Сделать published-версию активной |
+| `POST /app/mappings/rollback` | Откатить профиль к выбранной версии |
 
 ## 4. Monitor-раздел
 
 | Маршрут | Назначение |
 |---------|------------|
-| `GET /app/runs` | История запусков |
+| `GET /app/runs` | История запусков и форма запуска sync |
 | `GET /app/runs/{id}` | Детали конкретного запуска |
+| `POST /app/runs/trigger` | Запуск синхронизации для выбранного connection |
 | `GET /app/pipeline/graph` | Схема pipeline и переход к Dagster |
 | `GET /app/monitoring/normalization` | Журнал нормализации |
 | `GET /app/samples/preview` | Предпросмотр sample-данных |
@@ -71,8 +74,8 @@
 
 ## 7. Примечания для приемки
 
-- Не все POST-маршруты имеют одинаковую глубину персистентности (часть форм MVP-уровня).
-- Редактор маппингов предназначен для preview/валидации и не сохраняет YAML в файлы репозитория.
+- Не все POST-маршруты имеют одинаковую глубину персистентности (часть форм MVP-уровня), но `/app/runs/trigger` запускает реальный sync run.
+- Редактор маппингов сохраняет версии в БД (`mapping_profile_version`); YAML-файл используется как fallback/import.
 - Для ролевой приемки используйте матрицу операций из `/api/rbac/matrix`.
 
 ## 8. Связанные документы

@@ -3,23 +3,42 @@
 from __future__ import annotations
 
 from datetime import datetime
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import yaml
+from sqlalchemy import create_engine
+
+from sqlalchemy.engine import Engine
 
 from datanorma.config import get_settings
 from datanorma.normalization.enrich import enrich_canonical_rows
+from datanorma.web.mapping_profiles import MappingProfileError, load_mappings_with_db_override
 
 
-def load_source_mappings() -> dict[str, Any]:
+@lru_cache(maxsize=1)
+def _engine():
+    return create_engine(get_settings().database_url, pool_pre_ping=True)
+
+
+def load_source_mappings(*, workspace_code: str = "main", with_db_override: bool = True) -> dict[str, Any]:
     path = get_settings().resolved_source_mappings_path()
     if not path.is_file():
         raise FileNotFoundError(
             f"Файл маппинга не найден: {path}. Задайте DATANORMA_SOURCE_MAPPINGS_PATH или восстановите schemas/source_mappings.yaml."
         )
     with path.open(encoding="utf-8") as f:
-        return yaml.safe_load(f)
+        base = yaml.safe_load(f)
+    if not with_db_override:
+        return base
+    try:
+        return load_mappings_with_db_override(base_mappings=base, engine=_engine(), workspace_code=workspace_code)
+    except MappingProfileError:
+        return base
+    except Exception:
+        # Если БД или схема профилей недоступна, продолжаем по YAML как fallback.
+        return base
 
 
 def _parse_datetime(value: Any) -> str | None:
@@ -100,6 +119,16 @@ def _map_tabular_row(
         "channel": None,
         "line_description": None,
         "status": None,
+        "person_full_name": None,
+        "person_family_name": None,
+        "person_given_name": None,
+        "person_patronymic": None,
+        "contact_phone_e164": None,
+        "contact_email": None,
+        "country_code": None,
+        "order_status_code": None,
+        "payment_status_code": None,
+        "shipment_status_code": None,
     }
     for raw_key, canon_key in field_map.items():
         val = _lookup_row_value(row, raw_key, fuzzy_threshold=fuzzy_threshold)
@@ -175,6 +204,7 @@ def build_canonical_sales_rows(
     mappings: dict[str, Any] | None = None,
     *,
     batch_extracted_at: str | None = None,
+    engine: Engine | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     mappings = mappings or load_source_mappings()
     sources_cfg = mappings.get("sources") or {}
@@ -223,11 +253,11 @@ def build_canonical_sales_rows(
     stats["rows_in"] = len(all_rows)
     stats["rows_after_dedup"] = len(deduped)
 
-    deduped, enrich_meta = enrich_canonical_rows(deduped)
+    deduped, enrich_meta = enrich_canonical_rows(deduped, engine=engine)
     stats["enrich"] = enrich_meta
 
     if batch_extracted_at:
         for r in deduped:
-            r.setdefault("_airbyte_extracted_at", batch_extracted_at)
+            r.setdefault("_ingest_extracted_at", batch_extracted_at)
 
     return deduped, stats

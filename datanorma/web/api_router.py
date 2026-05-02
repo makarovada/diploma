@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
@@ -12,9 +12,30 @@ from sqlalchemy.engine import Connection
 from datanorma.web.config import dagster_console_url
 from datanorma.web.deps import AuthUser, get_conn, get_current_user, require_operation
 from datanorma.web.jwt_util import create_access_token
+from datanorma.web.mapping_profiles import (
+    MappingProfileError,
+    activate_profile_version,
+    create_draft_version,
+    list_profiles,
+    list_versions,
+    publish_version,
+    resolve_workspace_id,
+    rollback_to_version,
+)
 from datanorma.web.passwords import verify_password
 from datanorma.web.rbac_matrix import matrix_payload
-from datanorma.web.sql_util import warehouse_table_sql
+from datanorma.web.sync_runs import (
+    SyncRunError,
+    create_sync_run,
+    get_sync_run,
+    launch_dagster_run,
+    mark_sync_run_failed,
+    mark_sync_run_running,
+    refresh_recent_sync_runs,
+    refresh_sync_run_status,
+    resolve_connection,
+)
+from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
 from datanorma.web.users_repo import list_roles, list_users_with_roles, load_user_by_username
 
 router = APIRouter(tags=["api"])
@@ -108,7 +129,7 @@ def data_staging_ozon(
     lim = max(1, min(limit, 50))
     rows = conn.execute(
         text(
-            "SELECT id, ingest_batch_id, ingested_at, _airbyte_extracted_at, _airbyte_meta, payload_json "
+            "SELECT id, ingest_batch_id, ingested_at, _ingest_extracted_at, _ingest_meta, payload_json "
             "FROM raw_ozon_postings_staging ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim},
@@ -125,7 +146,7 @@ def data_staging_1c(
     lim = max(1, min(limit, 50))
     rows = conn.execute(
         text(
-            "SELECT id, ingest_batch_id, ingested_at, _airbyte_extracted_at, _airbyte_meta, row_json "
+            "SELECT id, ingest_batch_id, ingested_at, _ingest_extracted_at, _ingest_meta, row_json "
             "FROM raw_1c_orders_staging ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim},
@@ -142,7 +163,7 @@ def data_staging_sheet(
     lim = max(1, min(limit, 50))
     rows = conn.execute(
         text(
-            "SELECT id, ingest_batch_id, ingested_at, _airbyte_extracted_at, _airbyte_meta, row_json "
+            "SELECT id, ingest_batch_id, ingested_at, _ingest_extracted_at, _ingest_meta, row_json "
             "FROM raw_google_sheet_orders_staging ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim},
@@ -158,7 +179,7 @@ def data_sync_state(
     rows = conn.execute(
         text(
             "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
-            "airbyte_state, last_success_at, updated_at FROM sync_state "
+            "ingest_state, last_success_at, updated_at FROM sync_state "
             "ORDER BY integration_code, stream_name"
         )
     ).mappings().all()
@@ -182,22 +203,148 @@ def data_norm_issues(
     return {"rows": [dict(r) for r in rows]}
 
 
+@router.get("/data/normalization-fix-stats")
+def data_normalization_fix_stats(
+    _: Annotated[AuthUser, Depends(require_operation("view_normalization_issues"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    limit: int = 50,
+) -> dict[str, Any]:
+    """Агрегаты action/field из typed-слоя (_ingest_meta.changes)."""
+    lim = max(1, min(limit, 200))
+    t = typed_table_sql()
+    sql = text(
+        f"SELECT elem->>'action' AS action, elem->>'field' AS field, COUNT(*)::bigint AS cnt "
+        f"FROM {t}, "
+        f"LATERAL jsonb_array_elements(COALESCE(_ingest_meta->'changes', '[]'::jsonb)) AS elem "
+        f"WHERE elem->>'action' IS NOT NULL AND elem->>'action' != '' "
+        f"GROUP BY 1, 2 ORDER BY cnt DESC LIMIT :lim"
+    )
+    rows = conn.execute(sql, {"lim": lim}).mappings().all()
+    return {"rows": [dict(r) for r in rows]}
+
+
 @router.get("/data/mapping-profiles")
 def data_mapping_profiles(
     _: Annotated[AuthUser, Depends(require_operation("view_mapping_profiles"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_code: str = "main",
 ) -> dict[str, Any]:
-    rows = conn.execute(
-        text("SELECT id, name, version, notes, created_at FROM mapping_profile ORDER BY id")
-    ).mappings().all()
-    return {"rows": [dict(r) for r in rows]}
+    workspace_id = resolve_workspace_id(conn, workspace_code=workspace_code)
+    return {"rows": list_profiles(conn, workspace_id)}
 
 
-@router.post("/data/mapping-profiles/stub")
-def data_mapping_profiles_stub(
+@router.get("/data/mapping-profiles/{profile_id}/versions")
+def data_mapping_profile_versions(
+    profile_id: int,
+    _: Annotated[AuthUser, Depends(require_operation("view_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    return {"rows": list_versions(conn, profile_id)}
+
+
+class MappingProfileDraftBody(BaseModel):
+    workspace_code: str = Field(default="main", min_length=1, max_length=64)
+    source_type: str = Field(min_length=1, max_length=64)
+    stream_name: str = Field(min_length=1, max_length=128)
+    profile_name: str = Field(default="default", min_length=1, max_length=128)
+    rules_json: dict[str, Any]
+    change_note: str | None = Field(default=None, max_length=512)
+
+
+class MappingProfilePublishBody(BaseModel):
+    profile_id: int
+    version_id: int
+
+
+class MappingProfileRollbackBody(BaseModel):
+    profile_id: int
+    version_id: int
+    note: str | None = Field(default=None, max_length=512)
+
+
+@router.post("/data/mapping-profiles/draft")
+def data_mapping_profiles_draft(
+    body: MappingProfileDraftBody,
+    user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    try:
+        workspace_id = resolve_workspace_id(conn, workspace_code=body.workspace_code.strip())
+        row = create_draft_version(
+            conn,
+            workspace_id=workspace_id,
+            source_type=body.source_type.strip(),
+            stream_name=body.stream_name.strip(),
+            profile_name=body.profile_name.strip(),
+            rules_json=body.rules_json,
+            created_by=user.username,
+            change_note=(body.change_note or "").strip() or None,
+        )
+    except MappingProfileError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
+        ) from exc
+    return {"status": "ok", "item": row}
+
+
+@router.post("/data/mapping-profiles/publish")
+def data_mapping_profiles_publish(
+    body: MappingProfilePublishBody,
     _: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
-) -> dict[str, str]:
-    return {"status": "accepted", "note": "Заглушка: в прототипе профили задаются YAML и деплоем, не через API."}
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    try:
+        row = publish_version(conn, profile_id=body.profile_id, version_id=body.version_id)
+    except MappingProfileError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
+        ) from exc
+    return {"status": "ok", "item": row}
+
+
+@router.post("/data/mapping-profiles/activate")
+def data_mapping_profiles_activate(
+    body: MappingProfilePublishBody,
+    user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    try:
+        row = activate_profile_version(
+            conn,
+            profile_id=body.profile_id,
+            version_id=body.version_id,
+            updated_by=user.username,
+        )
+    except MappingProfileError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
+        ) from exc
+    return {"status": "ok", "item": row}
+
+
+@router.post("/data/mapping-profiles/rollback")
+def data_mapping_profiles_rollback(
+    body: MappingProfileRollbackBody,
+    user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    try:
+        row = rollback_to_version(
+            conn,
+            profile_id=body.profile_id,
+            version_id=body.version_id,
+            updated_by=user.username,
+            note=(body.note or "").strip() or None,
+        )
+    except MappingProfileError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
+        ) from exc
+    return {"status": "ok", "item": row}
 
 
 @router.get("/data/dim-sources")
@@ -317,6 +464,7 @@ class ConnectionUpsertBody(BaseModel):
 
 
 class SyncTriggerBody(BaseModel):
+    connection_id: int | None = None
     integration_code: str | None = Field(default=None, max_length=64)
     stream_name: str | None = Field(default=None, max_length=128)
     note: str | None = Field(default=None, max_length=512)
@@ -353,7 +501,7 @@ def v1_connections_upsert(
     ajs = '{"cursor": null, "rows_emitted": 0, "edited_via": "api_v1_connections"}'
     conn.execute(
         text(
-            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, airbyte_state, last_success_at, updated_at) "
+            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, last_success_at, updated_at) "
             "VALUES (:ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
             "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
             "sync_mode = EXCLUDED.sync_mode, cursor_field = EXCLUDED.cursor_field, updated_at = NOW()"
@@ -376,27 +524,96 @@ def v1_syncs_list(
     conn: Annotated[Connection, Depends(get_conn)],
     limit: int = 50,
 ) -> dict[str, Any]:
-    lim = max(1, min(limit, 500))
-    rows = conn.execute(
-        text(
-            "SELECT id, dagster_run_id, job_name, status, started_at, finished_at, meta "
-            "FROM pipeline_run_summary ORDER BY id DESC LIMIT :lim"
-        ),
-        {"lim": lim},
-    ).mappings().all()
-    return {"items": [dict(r) for r in rows]}
+    return {"items": refresh_recent_sync_runs(conn, limit=limit)}
 
 
-@v1.post("/syncs/trigger")
+@v1.post("/syncs/trigger", status_code=status.HTTP_202_ACCEPTED)
 def v1_sync_trigger(
     body: SyncTriggerBody,
-    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    user: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
-    # MVP: декларативная точка для внешнего оркестратора/UI; фактический запуск выполняется Dagster UI/CLI.
+    try:
+        connection_id, integration_code, stream_name = resolve_connection(
+            conn,
+            connection_id=body.connection_id,
+            integration_code=(body.integration_code or "").strip() or None,
+            stream_name=(body.stream_name or "").strip() or None,
+        )
+    except SyncRunError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "error_code": "invalid_connection",
+                "error_message": str(exc),
+            },
+        ) from exc
+
+    row = create_sync_run(
+        conn,
+        connection_id=connection_id,
+        integration_code=integration_code,
+        stream_name=stream_name,
+        triggered_by=user.username,
+        note=body.note,
+    )
+    run_id = int(row["id"])
+    try:
+        launch = launch_dagster_run(
+            sync_run_id=run_id,
+            integration_code=integration_code,
+            stream_name=stream_name,
+            triggered_by=user.username,
+        )
+        row = mark_sync_run_running(conn, run_id=run_id, dagster_run_id=launch.run_id)
+    except SyncRunError as exc:
+        row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error_code": "dagster_launch_failed",
+                "error_message": str(exc),
+                "run_id": run_id,
+            },
+        ) from exc
+
     return {
         "status": "accepted",
-        "note": "Trigger endpoint is declarative in prototype. Use Dagster run launch for execution.",
-        "payload": body.model_dump(),
+        "message": "Sync run accepted and launched",
+        "run_id": run_id,
+        "sync_run": row,
+    }
+
+
+@v1.get("/syncs/{run_id}")
+def v1_sync_get(
+    run_id: int,
+    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    row = get_sync_run(conn, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
+    return {"item": refresh_sync_run_status(conn, row)}
+
+
+@v1.get("/syncs/{run_id}/status")
+def v1_sync_status(
+    run_id: int,
+    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    row = get_sync_run(conn, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
+    current = refresh_sync_run_status(conn, row)
+    return {
+        "run_id": current["id"],
+        "status": current["status"],
+        "started_at": current.get("started_at"),
+        "finished_at": current.get("finished_at"),
+        "error_message": current.get("error_message"),
+        "dagster_run_id": current.get("dagster_run_id"),
     }
 
 

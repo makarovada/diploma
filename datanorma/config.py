@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     datanorma_repo_root: str = ""
     datanorma_source_mappings_path: str = ""
     datanorma_warehouse_table: str = "canonical_sales"
+    datanorma_typed_table: str = "typed_canonical_sales"
     datanorma_auto_create_tables: str = ""
     datanorma_jwt_secret: str = ""
     datanorma_jwt_expire_hours: int = 24

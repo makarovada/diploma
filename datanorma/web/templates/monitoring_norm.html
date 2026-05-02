@@ -1,18 +1,39 @@
 {% extends "base.html" %}
 {% block title %}Нормализация{% endblock %}
 {% block main %}
-<h1>Журнал normalization_issue</h1>
-<table><thead><tr><th>id</th><th>тип</th><th>источник</th><th>поле</th><th>сообщение</th><th>время</th></tr></thead>
-<tbody>
-{% for r in rows %}
-<tr>
-  <td>{{ r.id }}</td>
-  <td>{{ r.issue_type }}</td>
-  <td>{{ r.source_system }}</td>
-  <td>{{ r.field_name }}</td>
-  <td><small>{{ r.message }}</small></td>
-  <td><small>{{ r.created_at }}</small></td>
-</tr>
-{% endfor %}
-</tbody></table>
+<h1 class="ab-page-title">Мониторинг нормализации</h1>
+
+<div class="ab-card">
+  <h2 class="ab-page-title" style="font-size:1.1rem;margin:0 0 0.75rem;">Журнал normalization_issue</h2>
+  <table style="width:100%;border-collapse:collapse;font-size:0.875rem;"><thead><tr><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">id</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">тип</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">источник</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">поле</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">сообщение</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">время</th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+  <tr>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);">{{ r.id }}</td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);">{{ r.issue_type }}</td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);">{{ r.source_system }}</td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);">{{ r.field_name }}</td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);"><small>{{ r.message }}</small></td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);"><small>{{ r.created_at }}</small></td>
+  </tr>
+  {% endfor %}
+  </tbody></table>
+</div>
+
+<div class="ab-card" style="margin-top:1.25rem;">
+  <h2 class="ab-page-title" style="font-size:1.1rem;margin:0 0 0.5rem;">Типизированный слой: исправления</h2>
+  <p class="meta" style="margin:0 0 0.75rem;">Агрегаты по <code>action</code> и <code>field</code> из <code>_ingest_meta.changes</code> (typed-таблица).</p>
+  <table style="width:100%;border-collapse:collapse;font-size:0.875rem;"><thead><tr><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">action</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">field</th><th style="text-align:left;padding:0.35rem;border-bottom:1px solid var(--ab-border);">кол-во</th></tr></thead>
+  <tbody>
+  {% for r in fix_stats %}
+  <tr>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);"><code>{{ r.action }}</code></td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);">{{ r.field or "—" }}</td>
+    <td style="padding:0.35rem;border-bottom:1px solid var(--ab-border);">{{ r.cnt }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" style="padding:0.5rem;color:var(--ab-muted);"><em>Нет данных (или таблица ещё без записей с changes).</em></td></tr>
+  {% endfor %}
+  </tbody></table>
+</div>
 {% endblock %}

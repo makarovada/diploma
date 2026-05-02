@@ -10,7 +10,7 @@ from typing import Any, Iterator
 import httpx
 
 from datanorma.config import OZON_API_BASE, get_settings
-from datanorma.core.airbyte_protocol import AirbyteCatalog, SyncMode
+from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
 from datanorma.ingest.cursor_filter import filter_incremental_postings
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
@@ -93,7 +93,7 @@ class OzonSource(BaseSource):
                 details={"mode": "ozon_api"},
             )
 
-    def discover(self) -> AirbyteCatalog:
+    def discover(self) -> IngestCatalog:
         postings: list[dict[str, Any]] = []
         client_id = self._settings.ozon_client_id.strip()
         api_key = self._settings.ozon_api_key.strip()
@@ -105,14 +105,14 @@ class OzonSource(BaseSource):
         else:
             postings = _load_fixture(self._paths)
         schema = records_to_json_schema(postings)
-        stream = self.airbyte_stream(
+        stream = self.ingest_stream(
             "postings",
             schema,
             sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
             default_cursor_field=["posting_number"],
             source_defined_cursor=True,
         )
-        return AirbyteCatalog(streams=[stream])
+        return IngestCatalog(streams=[stream])
 
     def read(
         self,

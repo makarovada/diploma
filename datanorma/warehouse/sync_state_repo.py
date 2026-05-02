@@ -1,4 +1,4 @@
-"""Чтение и запись sync_state (Airbyte-style stream state)."""
+"""Чтение и запись sync_state (Ingest-style stream state)."""
 
 from __future__ import annotations
 
@@ -13,11 +13,11 @@ _log = logging.getLogger(__name__)
 
 
 class Phase1SchemaRequiredError(RuntimeError):
-    """БД без миграции 002 (Airbyte staging / sync_state по потокам)."""
+    """БД без миграции 002 (Ingest staging / sync_state по потокам)."""
 
 
 def ensure_phase1_schema(engine: Engine) -> None:
-    """Проверка перед sync_catalog / staging: ревизия `002_phase1_airbyte` должна быть применена."""
+    """Проверка перед sync_catalog / staging: ревизия `002_phase1_ingest` должна быть применена."""
     insp = inspect(engine)
     tables = set(insp.get_table_names())
     if "sync_state" not in tables:
@@ -30,22 +30,22 @@ def ensure_phase1_schema(engine: Engine) -> None:
         raise Phase1SchemaRequiredError(
             "В sync_state нет колонки stream_name — не применена миграция Phase 1. "
             "Выполните из каталога проекта: alembic upgrade head\n"
-            "Должна подтянуться ревизия 002_phase1_airbyte. "
+            "Должна подтянуться ревизия 002_phase1_ingest. "
             "Проверьте, что переменная DATABASE_URL в окружении Dagster совпадает с той, "
             "куда вы накатывали Alembic (например порт Docker 5433, а не локальный 5432)."
         )
     if "raw_ozon_postings_staging" not in tables:
         raise Phase1SchemaRequiredError(
             "Нет таблицы raw_ozon_postings_staging. Примените: alembic upgrade head "
-            "(миграция переименовывает raw_*_staging и добавляет _airbyte_* колонки)."
+            "(миграция переименовывает raw_*_staging и добавляет _ingest_* колонки)."
         )
 
 
 def extract_stream_cursor(row: RowMapping | dict[str, Any] | None) -> str | None:
-    """Достаёт строковый курсор из airbyte_state или legacy cursor_value JSON."""
+    """Достаёт строковый курсор из ingest_state или legacy cursor_value JSON."""
     if row is None:
         return None
-    air = row.get("airbyte_state")
+    air = row.get("ingest_state")
     if isinstance(air, dict):
         st = air.get("stream")
         if isinstance(st, dict) and st.get("cursor") is not None:
@@ -69,7 +69,7 @@ def fetch_sync_state_map(engine: Engine) -> dict[tuple[str, str], dict[str, Any]
     ensure_phase1_schema(engine)
     sql = text(
         "SELECT integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
-        "airbyte_state, last_success_at, updated_at FROM sync_state"
+        "ingest_state, last_success_at, updated_at FROM sync_state"
     )
     out: dict[tuple[str, str], dict[str, Any]] = {}
     with engine.connect() as conn:
@@ -79,7 +79,7 @@ def fetch_sync_state_map(engine: Engine) -> dict[tuple[str, str], dict[str, Any]
     return out
 
 
-def build_airbyte_state_dict(*, cursor: str | None, rows_emitted: int, batch_id: str) -> dict[str, Any]:
+def build_ingest_state_dict(*, cursor: str | None, rows_emitted: int, batch_id: str) -> dict[str, Any]:
     st: dict[str, Any] = {"version": 1, "records_emitted": rows_emitted, "batch_id": batch_id}
     if cursor is not None:
         st["stream"] = {"cursor": cursor}
@@ -94,17 +94,17 @@ def upsert_stream_state(
     sync_mode: str,
     cursor_field: str | None,
     cursor_value_text: str | None,
-    airbyte_state: dict[str, Any],
+    ingest_state: dict[str, Any],
 ) -> None:
     sql = text(
         "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, "
-        "cursor_value, airbyte_state, last_success_at, updated_at) "
+        "cursor_value, ingest_state, last_success_at, updated_at) "
         "VALUES (:ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
         "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
         "sync_mode = EXCLUDED.sync_mode, "
         "cursor_field = EXCLUDED.cursor_field, "
         "cursor_value = EXCLUDED.cursor_value, "
-        "airbyte_state = EXCLUDED.airbyte_state, "
+        "ingest_state = EXCLUDED.ingest_state, "
         "last_success_at = NOW(), "
         "updated_at = NOW()"
     )
@@ -114,7 +114,7 @@ def upsert_stream_state(
         "sm": sync_mode,
         "cf": cursor_field,
         "cv": cursor_value_text,
-        "ajs": json.dumps(airbyte_state, ensure_ascii=False, default=str),
+        "ajs": json.dumps(ingest_state, ensure_ascii=False, default=str),
     }
     with engine.begin() as conn:
         conn.execute(sql, payload)

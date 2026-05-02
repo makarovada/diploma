@@ -5,7 +5,7 @@
 ## Основные документы
 
 - `README.md` - карта проекта, архитектура, запуск и roadmap.
-- `docs/comparison_airbyte.md` - позиционирование DataNorma относительно Airbyte.
+- `docs/comparison_ingest.md` - позиционирование DataNorma относительно Ingest.
 - `docs/manual_testing_guide.md` - полный чеклист ручного тестирования и smoke-набор.
 - `docs/phase_c_routes.md` - перечень web UI маршрутов (`/app/*`).
 - `docs/adding_russian_connector.md` - инструкция по добавлению нового коннектора.

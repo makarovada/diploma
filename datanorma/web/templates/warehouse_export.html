@@ -1,7 +1,10 @@
 {% extends "base.html" %}
 {% block title %}Экспорт CSV{% endblock %}
 {% block main %}
-<h1>Экспорт витрины в CSV</h1>
+<h1>Экспорт витрины canonical_sales</h1>
 <p class="meta">Скачивание с учётом cookie-сессии (до 5000 строк).</p>
-<p><a class="btn" href="/app/warehouse/download.csv">Скачать canonical_sales.csv</a></p>
+<p><a class="btn" href="/app/warehouse/download.csv">Скачать CSV</a></p>
+<p><a class="btn" href="/app/warehouse/download.xlsx">Скачать XLSX</a></p>
+<p><a class="btn" href="/app/warehouse/download.json">Скачать JSON</a></p>
+<p><a class="btn" href="/app/warehouse/download.xml">Скачать XML</a></p>
 {% endblock %}

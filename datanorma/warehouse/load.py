@@ -56,7 +56,7 @@ def _row_to_payload(row: dict[str, Any], loaded_at: datetime) -> dict[str, Any] 
     sid = str(sid).strip()
     if not ss or not sid:
         return None
-    air_at = _parse_ts(row.get("_airbyte_extracted_at")) or loaded_at
+    air_at = _parse_ts(row.get("_ingest_extracted_at")) or loaded_at
     return {
         "source_system": ss,
         "source_record_id": sid,
@@ -72,9 +72,21 @@ def _row_to_payload(row: dict[str, Any], loaded_at: datetime) -> dict[str, Any] 
         "line_unit_normalized": (
             str(row["line_unit_normalized"]).strip() if row.get("line_unit_normalized") else None
         ),
+        "person_full_name": row.get("person_full_name"),
+        "person_family_name": (str(row["person_family_name"]).strip() if row.get("person_family_name") else None),
+        "person_given_name": (str(row["person_given_name"]).strip() if row.get("person_given_name") else None),
+        "person_patronymic": (str(row["person_patronymic"]).strip() if row.get("person_patronymic") else None),
+        "contact_phone_e164": (
+            str(row["contact_phone_e164"]).strip() if row.get("contact_phone_e164") else None
+        ),
+        "contact_email": (str(row["contact_email"]).strip().lower() if row.get("contact_email") else None),
+        "country_code": (str(row["country_code"]).strip().upper()[:2] if row.get("country_code") else None),
+        "order_status_code": (str(row["order_status_code"]).strip() if row.get("order_status_code") else None),
+        "payment_status_code": (str(row["payment_status_code"]).strip() if row.get("payment_status_code") else None),
+        "shipment_status_code": (str(row["shipment_status_code"]).strip() if row.get("shipment_status_code") else None),
         "normalization_meta": row.get("normalization_meta"),
         "loaded_at": loaded_at,
-        "_airbyte_loaded_at": air_at,
+        "_ingest_loaded_at": air_at,
     }
 
 
@@ -110,9 +122,9 @@ def load_canonical_sales_to_postgres(
             excluded = stmt.excluded
             set_map = {col: getattr(excluded, col) for col in update_cols}
             incremental_where = or_(
-                table.c._airbyte_loaded_at.is_(None),
-                excluded._airbyte_loaded_at.is_(None),
-                excluded._airbyte_loaded_at >= table.c._airbyte_loaded_at,
+                table.c._ingest_loaded_at.is_(None),
+                excluded._ingest_loaded_at.is_(None),
+                excluded._ingest_loaded_at >= table.c._ingest_loaded_at,
             )
             stmt = stmt.on_conflict_do_update(
                 index_elements=list(key_cols),

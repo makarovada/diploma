@@ -2,11 +2,29 @@
 {% block title %}Запуски{% endblock %}
 {% block main %}
 <h1>Запуски пайплайна</h1>
-<table><thead><tr><th>id</th><th>job</th><th>status</th><th>run id</th><th></th></tr></thead>
+{% if can_trigger %}
+<form method="post" action="/app/runs/trigger" style="margin-bottom: 1rem; display: flex; gap: .5rem; align-items: center;">
+  <label>Connection:
+    <select name="connection_id" required>
+      {% for c in connections %}
+      <option value="{{ c.id }}">{{ c.integration_code }} / {{ c.stream_name }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <input name="note" placeholder="Комментарий (опционально)" />
+  <button type="submit">Запустить синхронизацию</button>
+</form>
+{% endif %}
+<table><thead><tr><th>id</th><th>connection</th><th>status</th><th>dagster run id</th><th>started</th><th>finished</th><th></th></tr></thead>
 <tbody>
 {% for r in rows %}
 <tr>
-  <td>{{ r.id }}</td><td>{{ r.job_name }}</td><td>{{ r.status }}</td><td><small>{{ r.dagster_run_id }}</small></td>
+  <td>{{ r.id }}</td>
+  <td>{{ r.integration_code }} / {{ r.stream_name }}</td>
+  <td>{{ r.status }}</td>
+  <td><small>{{ r.dagster_run_id or "-" }}</small></td>
+  <td><small>{{ r.started_at or "-" }}</small></td>
+  <td><small>{{ r.finished_at or "-" }}</small></td>
   <td><a href="/app/runs/{{ r.id }}">Детали</a></td>
 </tr>
 {% endfor %}

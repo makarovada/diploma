@@ -33,8 +33,8 @@ dev = [
     "pytest>=8.0",
 ]
 # Тяжёлая цепочка зависимостей — только когда нужны рантайм-утилиты CDK рядом с проектом.
-dev-airbyte = [
-    "airbyte-cdk>=6.0.0",
+dev-ingest = [
+    "ingest-cdk>=6.0.0",
 ]
 
 [tool.setuptools.package-data]

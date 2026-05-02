@@ -1,6 +1,7 @@
 import dagster as dg
 
 from datanorma.normalization.to_canonical import build_canonical_sales_rows, load_source_mappings
+from datanorma.resources.database import PostgresResource
 
 
 @dg.asset(
@@ -13,16 +14,19 @@ def normalized_orders(
     raw_1c_orders: dict,
     raw_google_sheet_orders: dict,
     staging_raw_postgres: dict,
+    postgres: PostgresResource,
 ) -> dict:
     _ = staging_raw_postgres
     mappings = load_source_mappings()
     batch_ts = (staging_raw_postgres or {}).get("batch_extracted_at")
+    engine = postgres.get_engine()
     rows, stats = build_canonical_sales_rows(
         raw_ozon_postings,
         raw_1c_orders,
         raw_google_sheet_orders,
         mappings=mappings,
         batch_extracted_at=batch_ts,
+        engine=engine,
     )
     return {
         "canonical_schema": mappings.get("canonical"),

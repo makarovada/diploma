@@ -46,4 +46,36 @@ def test_row_to_payload_maps_fields() -> None:
     assert p["source_system"] == "ozon"
     assert p["amount_rub"] == 10.5
     assert p["currency_code"] == "RUB"
-    assert p["_airbyte_loaded_at"] == now
+    assert p["_ingest_loaded_at"] == now
+
+
+def test_row_to_payload_includes_business_columns() -> None:
+    now = datetime.now(timezone.utc)
+    p = _row_to_payload(
+        {
+            "source_system": "ozon",
+            "source_record_id": "x",
+            "event_datetime": "2025-01-01T00:00:00+03:00",
+            "amount": 1,
+            "amount_rub": 1,
+            "currency_code": "RUB",
+            "person_family_name": "Иванов",
+            "contact_phone_e164": "+79031234567",
+            "contact_email": "a@b.co",
+            "country_code": "ru",
+            "order_status_code": "DONE",
+            "line_unit_normalized": None,
+            "counterparty_name": None,
+            "line_description": None,
+            "channel": None,
+            "status": None,
+            "cbr_rate_date": "2025-01-01",
+        },
+        now,
+    )
+    assert p is not None
+    assert p["person_family_name"] == "Иванов"
+    assert p["contact_phone_e164"] == "+79031234567"
+    assert p["contact_email"] == "a@b.co"
+    assert p["country_code"] == "RU"
+    assert p["order_status_code"] == "DONE"

@@ -1,7 +1,7 @@
 """Phase 2: typed_canonical_sales for typing & deduping layer.
 
 Revision ID: 003_phase2_typed
-Revises: 002_phase1_airbyte
+Revises: 002_phase1_ingest
 Create Date: 2026-04-08
 """
 
@@ -14,7 +14,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "003_phase2_typed"
-down_revision: Union[str, None] = "002_phase1_airbyte"
+down_revision: Union[str, None] = "002_phase1_ingest"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -40,8 +40,8 @@ def upgrade() -> None:
             sa.Column("status", sa.String(length=128), nullable=True),
             sa.Column("line_unit_normalized", sa.String(length=64), nullable=True),
             sa.Column("cbr_rate_date", sa.Date(), nullable=True),
-            sa.Column("_airbyte_extracted_at", sa.DateTime(timezone=True), nullable=True),
-            sa.Column("_airbyte_meta", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+            sa.Column("_ingest_extracted_at", sa.DateTime(timezone=True), nullable=True),
+            sa.Column("_ingest_meta", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
             sa.Column("loaded_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
             sa.PrimaryKeyConstraint("source_system", "source_record_id", name="pk_typed_canonical_sales"),
         )

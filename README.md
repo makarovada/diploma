@@ -1,7 +1,7 @@
 # DataNorma
 
 DataNorma - сервис интеграции и нормализации данных для малого и среднего бизнеса, ориентированный на российскую аудиторию.  
-По продуктовой идее это аналог Airbyte: готовые коннекторы, управляемые синхронизации, единая каноническая модель данных и операционная консоль.
+По продуктовой идее это аналог Ingest: готовые коннекторы, управляемые синхронизации, единая каноническая модель данных и операционная консоль.
 
 Текущая реализация сочетает:
 - оркестрацию в Dagster;
@@ -14,7 +14,7 @@ DataNorma - сервис интеграции и нормализации дан
 
 - Подключает данные из готовых источников и в fallback-режиме работает на sample-файлах.
 - Поддерживает режимы full refresh и incremental по курсору.
-- Пишет raw-слой в PostgreSQL (`raw_*_staging`) с Airbyte-style метаданными.
+- Пишет raw-слой в PostgreSQL (`raw_*_staging`) с Ingest-style метаданными.
 - Приводит данные к канонической модели продаж (`canonical_sales`).
 - Выполняет enrichment: даты в `Europe/Moscow`, конвертация валют через ЦБ РФ, нормализация единиц.
 - Типизирует канонический слой по YAML-схеме.
@@ -195,10 +195,10 @@ python -m datanorma.web
 - Состояние синхронизации: `sync_state`
 - Витрина: `canonical_sales` (или имя из `DATANORMA_WAREHOUSE_TABLE`)
 
-В raw-слое используются техполя в стиле Airbyte:
-- `_airbyte_raw_id`
-- `_airbyte_extracted_at`
-- `_airbyte_meta`
+В raw-слое используются техполя в стиле Ingest:
+- `_ingest_raw_id`
+- `_ingest_extracted_at`
+- `_ingest_meta`
 
 ## 10) Web UI и API
 
@@ -228,7 +228,7 @@ pytest tests/ -q
 - нормализация и enrich;
 - курсоры incremental;
 - staging и warehouse;
-- Airbyte protocol layer;
+- Ingest protocol layer;
 - API-маршруты и RBAC;
 - Dagster definitions/checks.
 
@@ -239,7 +239,7 @@ pytest tests/ -q
 
 - `docs/README.md` - индекс документации и единый стандарт.
 - `docs/manual_testing_guide.md` - детальные ручные сценарии.
-- `docs/comparison_airbyte.md` - сравнение с Airbyte.
+- `docs/comparison_ingest.md` - сравнение с Ingest.
 - `docs/adding_russian_connector.md` - как добавить новый российский коннектор.
 - `docs/phase_c_routes.md` - список web-маршрутов.
 - `docs/vkr_rbac_text.md` - текстовый материал по RBAC для ВКР.
@@ -247,7 +247,7 @@ pytest tests/ -q
 ## 13) Ограничения текущей версии
 
 - Основной destination сейчас один: PostgreSQL.
-- Часть возможностей Airbyte реализована частично или в упрощенном виде (особенно вокруг универсальности коннекторов и UX-конструктора).
+- Часть возможностей Ingest реализована частично или в упрощенном виде (особенно вокруг универсальности коннекторов и UX-конструктора).
 - Есть API-эндпоинты в формате продукта, но не все из них запускают полный продакшен-оркестрационный цикл.
 - Проект ориентирован на дипломный MVP и развитие в сторону полноценного SaaS.
 
@@ -260,28 +260,28 @@ pytest tests/ -q
 - Развить мультитенантный контур (organization/workspace) до production-ready состояния.
 - Расширить no-code/low-code UX для управления коннекциями.
 
-## 15) Позиционирование относительно Airbyte
+## 15) Позиционирование относительно Ingest
 
 DataNorma уже закрывает базовый сценарий "подключить источник -> нормализовать -> загрузить в warehouse" в российском контексте и с акцентом на бизнес-данные МСБ.
 
 Ключевое отличие на текущем этапе:
-- Airbyte - зрелая универсальная платформа с большим ecosystem;
+- Ingest - зрелая универсальная платформа с большим ecosystem;
 - DataNorma - целевой продуктовый MVP, фокусированный на локальных интеграциях, кастомной нормализации и прозрачном Python/Dagster-контуре.
 
-Подробное сравнение: `docs/comparison_airbyte.md`.
+Подробное сравнение: `docs/comparison_ingest.md`.
 # DataNorma
 
 Конфигурируемый прототип интеграции и нормализации данных для МСБ (оркестрация: **Dagster**).
 
-## Сравнение с Airbyte
+## Сравнение с Ingest
 
-Веб-консоль и смысловые блоки (Sources, Destinations, Connections, sync history и т.д.) сознательно согласованы с продуктовой логикой **[Airbyte](https://airbyte.com)** (open-source EL/ELT), но оркестрация и нормализация реализованы на **Dagster** и собственном Python/YAML-слое. Развёрнутая таблица соответствий и отличий: **[docs/comparison_airbyte.md](docs/comparison_airbyte.md)**.
+Веб-консоль и смысловые блоки (Sources, Destinations, Connections, sync history и т.д.) сознательно согласованы с продуктовой логикой **Ingest** (open-source EL/ELT), но оркестрация и нормализация реализованы на **Dagster** и собственном Python/YAML-слое. Развёрнутая таблица соответствий и отличий: **[docs/comparison_ingest.md](docs/comparison_ingest.md)**.
 
 - Полный перечень текущего функционала и пошаговое ручное тестирование (включая интеграции): **[docs/manual_testing_guide.md](docs/manual_testing_guide.md)**.
 
 - Централизованные пути и переменные окружения: **`datanorma/config.py`** (`pydantic-settings`, при необходимости читает `.env`).
-- Базовые типы **Airbyte Protocol** (Record, State, Catalog, Stream …): **`datanorma/core/airbyte_protocol.py`**.
-- Dev-зависимости: `pip install -e ".[dev]"` (в т.ч. `dbt-postgres`). Пакет **Airbyte CDK** при необходимости: `pip install -e ".[dev-airbyte]"`.
+- Базовые типы **Ingest Protocol** (Record, State, Catalog, Stream …): **`datanorma/core/ingest_protocol.py`**.
+- Dev-зависимости: `pip install -e ".[dev]"` (в т.ч. `dbt-postgres`). Пакет **Ingest CDK** при необходимости: `pip install -e ".[dev-ingest]"`.
 
 ## Для кого и что это
 
@@ -353,16 +353,16 @@ python scripts/seed_database.py
 
 Переменная **`DATABASE_URL`** — как у Dagster (см. `.env.example`).
 
-Если при материализации **`sync_catalog`** в Dagster ошибка **`column "stream_name" does not exist`**: схема БД старая, не накатили Phase 1. В каталоге проекта выполните **`alembic upgrade head`** с **тем же** `DATABASE_URL`, что видит Dagster (часто сбой из‑за порта **5432** локального Postgres вместо **5433** из `docker-compose`). Проверка: `alembic current` должно показывать ревизию **`002_phase1_airbyte`**.
+Если при материализации **`sync_catalog`** в Dagster ошибка **`column "stream_name" does not exist`**: схема БД старая, не накатили Phase 1. В каталоге проекта выполните **`alembic upgrade head`** с **тем же** `DATABASE_URL`, что видит Dagster (часто сбой из‑за порта **5432** локального Postgres вместо **5433** из `docker-compose`). Проверка: `alembic current` должно показывать ревизию **`002_phase1_ingest`**.
 
 ## Фаза B: raw в PostgreSQL (staging)
 
 После фазы А пайплайн фиксирует сырой слой в БД до нормализации (аналог **landing / raw** в medallion или буфера в ELT):
 
 - Asset **`sync_catalog`** читает **`sync_state`** и YAML до raw-слоя; raw-ассеты поддерживают **`full_refresh`** / **`incremental`** (поля `sync_mode`, `cursor_field` в `source_mappings.yaml`).
-- Asset **`staging_raw_postgres`** пишет в **`raw_ozon_postings_staging`**, **`raw_1c_orders_staging`**, **`raw_google_sheet_orders_staging`** с мета-колонками **`_airbyte_raw_id`**, **`_airbyte_extracted_at`**, **`_airbyte_meta`**; общий **`ingest_batch_id`** (UUID).
-- **`sync_state`**: строка на пару `(integration_code, stream_name)` + **`airbyte_state`** (JSON), **`cursor_field`**, режим синхронизации.
-- Витрина: колонка **`_airbyte_loaded_at`**, UPSERT обновляет строку только если новое значение не старее (инкрементальная логика по времени загрузки).
+- Asset **`staging_raw_postgres`** пишет в **`raw_ozon_postings_staging`**, **`raw_1c_orders_staging`**, **`raw_google_sheet_orders_staging`** с мета-колонками **`_ingest_raw_id`**, **`_ingest_extracted_at`**, **`_ingest_meta`**; общий **`ingest_batch_id`** (UUID).
+- **`sync_state`**: строка на пару `(integration_code, stream_name)` + **`ingest_state`** (JSON), **`cursor_field`**, режим синхронизации.
+- Витрина: колонка **`_ingest_loaded_at`**, UPSERT обновляет строку только если новое значение не старее (инкрементальная логика по времени загрузки).
 - **`normalized_orders`** зависит от `staging_raw_postgres`, поэтому порядок материализации: raw → staging → каноника → warehouse.
 
 Логика вставок: `datanorma/warehouse/raw_staging.py`. Нужны применённые миграции Alembic (таблицы staging).
@@ -386,7 +386,7 @@ python scripts/seed_database.py
 
 - **Вход:** форма на **`/app/login`** (POST), сессия через **httpOnly cookie** + тот же JWT, что и для API.
 - **≥20 уникальных маршрутов** под шаблоны в `datanorma/web/templates/`; роутинг и данные — `datanorma/web/pages_jinja.py`. Навигация в `base.html` дублирует список из кода (подпись, URL, операция RBAC).
-- **UI в духе Airbyte:** светлая консоль (`datanorma/web/static/theme-airbyte.css`), секции **Sources**, **Destinations**, **Connections**, sync history / settings / secrets; оркестрация вынесена в **Dagster** (`/app/external/dagster`). Подробнее о сходстве и отличиях — **`/app/about`**.
+- **UI в духе Ingest:** светлая консоль (`datanorma/web/static/theme-ingest.css`), секции **Sources**, **Destinations**, **Connections**, sync history / settings / secrets; оркестрация вынесена в **Dagster** (`/app/external/dagster`). Подробнее о сходстве и отличиях — **`/app/about`**.
 - Примеры экранов: смена пароля, дашборд (Home), **connections** и **destinations**, источники и карточка, ключи/env с маскированием, маппинги и редактор YAML (отправка без записи на диск), предпросмотр sample, запуски и детали run, **статическая схема** пайплайна + ссылка на Dagster, витрина с фильтром, страница экспорта и **`/app/warehouse/download.csv`**, справочники, админ-пользователи, назначение ролей, журнал нормализации, cron в настройках, «о системе и FAQ».
 - На каждой странице проверка **операции** из `rbac_matrix.py` (как и для REST); при отсутствии прав — страница **403** (`forbidden.html`).
 - Перечень путей для приложения к ВКР: **`docs/phase_c_routes.md`**.
@@ -438,13 +438,13 @@ docker compose -f c:\dev\diploma\diploma\docker-compose.yml exec postgres psql -
 - **Compute log capture is disabled (Windows)** — логи выполнения шагов в UI могут быть пустыми. Чтобы включить захват, перед запуском задайте `PYTHONLEGACYWINDOWSSTDIO=1` (в PowerShell: `$env:PYTHONLEGACYWINDOWSSTDIO="1"`).
 - Строка про **daemons** и **Serving dagster-webserver on http://127.0.0.1:3000** означает, что всё поднялось успешно.
 
-### Сравнение с Airbyte
-|Категория|Что есть в Airbyte|Что есть у тебя|Что не хватает (приоритет для диплома)|
+### Сравнение с Ingest
+|Категория|Что есть в Ingest|Что есть у тебя|Что не хватает (приоритет для диплома)|
 |---------|------------------|---------------|--------------------------------------|
 |Коннекторы|600+ любых|3 специфических (Ozon/1C/Google Sheets)|"Универсальный механизм коннекторов + Connector Builder / CDK. Сейчас всё ""вшито"" в Dagster assets."|
 |Схема и discovery|Автоматический discover() + JSON Schema|Жёсткие YAML-маппинги|Автоматическое обнаружение схемы источников (чтобы не писать маппинг вручную каждый раз)|
 |Режимы синхронизации|Full / Incremental / CDC + state|Только full (судя по коду и сэмплам)|Incremental + state management (чтобы не переливать всё каждый день)|
-|Нормализация|Typing + Deduping (TyD) + dbt (generic + typed columns)|"Кастомная бизнес-нормализация (валюты, даты, fuzzy, units)"|1) Генерация typed columns по схеме (как TyD). 2) Поддержка dbt / SQL-трансформаций после загрузки. 3) Raw-таблицы + _airbyte_meta для ошибок.|
+|Нормализация|Typing + Deduping (TyD) + dbt (generic + typed columns)|"Кастомная бизнес-нормализация (валюты, даты, fuzzy, units)"|1) Генерация typed columns по схеме (как TyD). 2) Поддержка dbt / SQL-трансформаций после загрузки. 3) Raw-таблицы + _ingest_meta для ошибок.|
 |Назначения|Много (warehouse + lakes + DB)|Только один Postgres-warehouse + фиксированная canonical_sales|Несколько destinations + выбор (или хотя бы абстракция).|
 |UI / UX|Полноценный no-code builder соединений|"20+ экранов FastAPI+Jinja (хорошо, но проще)"|Визуальный конструктор Connections (drag-and-drop streams/fields).|
 |Оркестрация|Собственный движок + Temporal + Workloads|Dagster (отлично!)|— (Dagster даже лучше для сложных пайплайнов)|

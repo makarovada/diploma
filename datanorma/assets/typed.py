@@ -10,7 +10,7 @@ from datanorma.resources.database import PostgresResource
 
 @dg.asset(
     group_name="typed",
-    description="Typing & deduping: canonical rows -> typed_canonical_sales with _airbyte_meta.changes",
+    description="Typing & deduping: canonical rows -> typed_canonical_sales with _ingest_meta.changes",
 )
 def typed_canonical_sales(normalized_orders: dict, postgres: PostgresResource) -> dict:
     rows = normalized_orders.get("rows") or []

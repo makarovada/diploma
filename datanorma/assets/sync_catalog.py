@@ -1,4 +1,4 @@
-"""Загрузка каталога потоков и sync_state из БД перед raw-синхронизацией (как read state в Airbyte)."""
+"""Загрузка каталога потоков и sync_state из БД перед raw-синхронизацией (как read state в Ingest)."""
 
 from __future__ import annotations
 

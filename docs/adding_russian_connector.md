@@ -84,5 +84,5 @@
 ## 7. Связанные документы
 
 - Карта проекта и runbook: `README.md`
-- Сравнение с Airbyte: `docs/comparison_airbyte.md`
+- Сравнение с Ingest: `docs/comparison_ingest.md`
 - Ручное тестирование: `docs/manual_testing_guide.md`
