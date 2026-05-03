@@ -18,6 +18,13 @@ class DbUser:
     roles: list[str]
 
 
+def update_user_password_hash(conn: Connection, user_id: int, password_hash: str) -> None:
+    conn.execute(
+        text("UPDATE app_user SET password_hash = :h WHERE id = :id"),
+        {"h": password_hash, "id": user_id},
+    )
+
+
 def load_user_by_username(conn: Connection, username: str) -> DbUser | None:
     urow = conn.execute(
         text(

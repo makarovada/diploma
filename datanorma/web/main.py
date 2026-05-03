@@ -12,6 +12,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from datanorma.web.api_router import router as api_router
+from datanorma.web.config import cors_allow_origins, validate_security_at_startup
 from datanorma.web.pages_jinja import router as pages_router
 from datanorma.web.pages_jinja import templates as jinja_templates
 from datanorma.web.web_auth import WebAuthRequired
@@ -20,14 +21,15 @@ _STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 
 def create_app() -> FastAPI:
+    validate_security_at_startup()
     app = FastAPI(
         title="DataNorma",
-        description="Прототип: REST API, JWT/RBAC, Jinja2 веб-клиент (фаза C).",
+        description="REST API, JWT/RBAC; целевой UI — React SPA (/ui/), Jinja /app — legacy/fallback.",
         version="0.3.0",
     )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_allow_origins(),
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -54,7 +56,8 @@ def create_app() -> FastAPI:
 
     @app.get("/", include_in_schema=False)
     def root():
-        return RedirectResponse(url="/app/login")
+        # Целевой UI — React SPA под /ui/; Jinja /app/* остаётся как legacy/fallback.
+        return RedirectResponse(url="/ui/")
 
     if _STATIC_DIR.is_dir():
         app.mount("/ui", StaticFiles(directory=str(_STATIC_DIR), html=True), name="ui")

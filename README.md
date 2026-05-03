@@ -5,10 +5,14 @@ DataNorma - сервис интеграции и нормализации дан
 
 Текущая реализация сочетает:
 - оркестрацию в Dagster;
-- коннекторы к популярным источникам (Ozon, 1C, Google Sheets);
+- коннекторы к популярным источникам (Ozon, 1C, Google Sheets, Яндекс Метрика);
 - нормализацию в Python/YAML;
 - загрузку в PostgreSQL (staging + warehouse);
-- веб-интерфейс и REST API на FastAPI + Jinja2 с RBAC.
+- **целевой веб-интерфейс** — React/Vite SPA под `/ui/` (JWT через `/api/auth/login`, `/api/auth/me`);
+- **legacy/fallback** — Jinja2 под `/app/*` (cookie + тот же JWT);
+- REST API на FastAPI с RBAC.
+
+Краткая стратегия UI (React vs Jinja): [docs/frontend.md](docs/frontend.md).
 
 ## 1) Что умеет проект сейчас
 
@@ -136,7 +140,9 @@ python -m datanorma.web
 - `DATANORMA_SOURCE_MAPPINGS_PATH` - путь к кастомному YAML-маппингу.
 - `DATANORMA_REPO_ROOT` - корень репозитория (важно для sample-данных вне editable-режима).
 - `DATANORMA_WAREHOUSE_TABLE` - имя целевой витрины (по умолчанию `canonical_sales`).
-- `DATANORMA_JWT_SECRET`, `DATANORMA_JWT_EXPIRE_HOURS` - аутентификация веба/API.
+- `DATANORMA_JWT_SECRET`, `DATANORMA_JWT_EXPIRE_HOURS` — аутентификация веба/API; пароли пользователей хранятся как **bcrypt** (старые записи с SHA-256 hex всё ещё проходят проверку при входе).
+- `DATANORMA_ENVIRONMENT` — `development` (по умолчанию) или `production`; в **production** без непустого `DATANORMA_JWT_SECRET` приложение не стартует, плейсхолдер `dev-insecure-change-me` запрещён.
+- `DATANORMA_CORS_ORIGINS` — список разрешённых origin через запятую; в **production** обязателен (нельзя сочетать `*` с `credentials`).
 - `DATANORMA_DAGSTER_UI_URL` - ссылка на внешний Dagster UI из веба.
 - `OZON_CLIENT_ID`, `OZON_API_KEY`, `OZON_FETCH_LIMIT` - Ozon API.
 - `DATANORMA_1C_EXPORT_PATH` - путь к 1C CSV/XLSX.
@@ -372,15 +378,18 @@ python scripts/seed_database.py
 Для методички (свои экраны, матрица «роль × операция», скриншоты под разными учётками):
 
 1. Поднять БД, миграции и сиды (`alembic upgrade head`, `python scripts/seed_database.py`) — в `app_user` / `role` / `user_role` появятся демо-пользователи.
-2. Запуск UI и REST: **`python -m datanorma.web`** → корень **`/`** ведёт на **`/app/login`** (веб-клиент Jinja2). REST: префикс **`/api`**. Классический одностраничный интерфейс сохранён на **`/ui/`**.
-3. Демо-пароли (см. также экран входа): **`seed_admin` / AdminDemo2026**, **`seed_integrator` / IntegratorDemo2026**, **`seed_analyst` / AnalystDemo2026**.
-4. Каждый защищённый маршрут API сопоставлен с **операцией** в `datanorma/web/rbac_matrix.py`; JWT содержит **claims `roles`**; при запрете — **403** с указанием операции.
-5. **Dagster** остаётся операционной консолью; для ВКР основной акцент — на **веб-клиенте** (фаза C) и матрице доступа.
-6. Готовый текст для главы диплома: **`docs/vkr_rbac_text.md`**.
+2. Запуск UI и REST: **`python -m datanorma.web`** (по умолчанию `http://127.0.0.1:8080`). Корень **`/`** перенаправляет на **`/ui/`** (React). Jinja-вход и экраны: **`/app/login`**, **`/app/*`**. REST: префикс **`/api`** (`POST /api/auth/login`, `GET /api/auth/me` с `Authorization: Bearer`).
+3. Локальная разработка React: в каталоге **`client/`** выполнить **`npm install`** и **`npm run dev`** — Vite проксирует **`/api`** на тот же backend (`127.0.0.1:8080`). Сборка: **`npm run build`** → артефакты в **`client/dist/`**; чтобы отдавать их с FastAPI под **`/ui/`**, скопируйте содержимое в **`datanorma/web/static/`** (или настройте CI).
+4. Демо-пароли (React и Jinja): **`seed_admin` / AdminDemo2026**, **`seed_integrator` / IntegratorDemo2026**, **`seed_analyst` / AnalystDemo2026**.
+5. Каждый защищённый маршрут API сопоставлен с **операцией** в `datanorma/web/rbac_matrix.py`; JWT содержит **claims `roles`**; при запрете — **403** с указанием операции (в React — экран **`/#/forbidden`**).
+6. **Dagster** остаётся операционной консолью; для ВКР основной акцент — на **веб-клиенте** (фаза C) и матрице доступа.
+7. Готовый текст для главы диплома: **`docs/vkr_rbac_text.md`**.
 
-Переменные: **`DATANORMA_JWT_SECRET`**, **`DATANORMA_DAGSTER_UI_URL`** (см. `.env.example`).
+Переменные: **`DATANORMA_JWT_SECRET`**, **`DATANORMA_DAGSTER_UI_URL`**, при деплое — **`DATANORMA_ENVIRONMENT=production`**, **`DATANORMA_CORS_ORIGINS`** (см. `.env.example`).
 
-## Фаза C: веб-клиент (≥20 экранов, Jinja2)
+## Фаза C: веб-клиент (React + Jinja2)
+
+**Целевой интерфейс** — React SPA в `client/`, URL **`/ui/`** (hash-router), аутентификация через **`/api/auth/login`** и Bearer JWT. **Legacy / fallback** — **Jinja2** под **`/app/*`** (удобно для демо без сборки фронта и для сравнения в ВКР).
 
 Реализовано **FastAPI + Jinja2** (альтернатива Streamlit — быстрее набрать экраны, но здесь единый стек с API и **явные URL** для скриншотов). Уточните у кафедры, засчитывают ли такие страницы как «экранные формы»; при необходимости сравнение с Streamlit можно описать в ВКР.
 

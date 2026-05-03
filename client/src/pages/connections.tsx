@@ -1,11 +1,18 @@
 import { useQuery } from "@tanstack/react-query";
-import { connections } from "@/lib/mock-data";
+import { fetchV1Connections, mapV1ToConnection } from "@/lib/api-datanorma";
+import { queryKeys } from "@/lib/query-keys";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 
 export function ConnectionsPage() {
-  const query = useQuery({ queryKey: ["connections"], queryFn: async () => connections });
+  const query = useQuery({
+    queryKey: queryKeys.connections.list(),
+    queryFn: async () => {
+      const { items } = await fetchV1Connections();
+      return items.map(mapV1ToConnection);
+    },
+  });
   if (query.isLoading) return <div data-testid="state-loading-connections" className="p-4">Загрузка подключений...</div>;
   if (query.isError || !query.data) return <div data-testid="state-error-connections" className="p-4">Ошибка загрузки подключений.</div>;
   if (query.data.length === 0) return <div data-testid="state-empty-connections" className="p-4">Пока нет подключений.</div>;

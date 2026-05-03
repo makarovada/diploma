@@ -7,8 +7,9 @@ import { LinkAsButton } from "@/components/link-as-button";
 import { Card } from "@/components/ui/card";
 
 export function ConnectionSettingsPage() {
-  const { connection, id } = useConnectionFromPath();
-  if (!connection) {
+  const { connection, id, isLoading, isError } = useConnectionFromPath();
+  if (isLoading) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
+  if (isError || !connection) {
     return (
       <div className="p-4">
         Не найдено. <LinkAsButton href="/connections">К списку</LinkAsButton>

@@ -1,5 +1,5 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import { runs, runLogsExtended } from "@/lib/mock-data";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
@@ -7,10 +7,51 @@ import { StageTimeline } from "@/components/stage-timeline";
 import { LogViewer } from "@/components/log-viewer";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { fetchV1Sync, mapV1SyncToRun, syncRunLogLines } from "@/lib/api-datanorma";
+import { queryKeys } from "@/lib/query-keys";
 
 export function RunDetailPage() {
   const [, params] = useRoute("/runs/:id");
-  const run = runs.find((x) => x.id === params?.id) ?? runs[0];
+  const rawId = params?.id ?? "";
+  const runId = Number.parseInt(rawId, 10);
+
+  const query = useQuery({
+    queryKey: queryKeys.runs.detail(rawId),
+    queryFn: async () => {
+      const { item } = await fetchV1Sync(runId);
+      return item;
+    },
+    enabled: Number.isFinite(runId) && runId > 0,
+  });
+
+  if (!rawId || !Number.isFinite(runId) || runId <= 0) {
+    return (
+      <div className="p-4">
+        Некорректный идентификатор запуска. <LinkAsButton href="/runs">К списку</LinkAsButton>
+      </div>
+    );
+  }
+
+  if (query.isPending) return <div className="p-4 text-muted-foreground">Загрузка запуска…</div>;
+  if (query.isError) {
+    return (
+      <div className="p-4">
+        Запуск не найден или нет доступа. <LinkAsButton href="/runs">К списку</LinkAsButton>
+      </div>
+    );
+  }
+
+  const item = query.data;
+  if (!item) {
+    return (
+      <div className="p-4">
+        Нет данных. <LinkAsButton href="/runs">К списку</LinkAsButton>
+      </div>
+    );
+  }
+
+  const run = mapV1SyncToRun(item);
+  const logs = syncRunLogLines(item);
 
   return (
     <div className="space-y-4 p-4">
@@ -23,9 +64,11 @@ export function RunDetailPage() {
             <Button type="button" data-testid="button-rerun">
               Повторить
             </Button>
-            <LinkAsButton href={`/connections/${run.connectionId}`} variant="outline" data-testid="button-open-connection-from-run">
-              Открыть подключение
-            </LinkAsButton>
+            {run.connectionId ? (
+              <LinkAsButton href={`/connections/${run.connectionId}`} variant="outline" data-testid="button-open-connection-from-run">
+                Открыть подключение
+              </LinkAsButton>
+            ) : null}
             <LinkAsButton href={`/runs/${run.id}/logs`} variant="outline" data-testid="button-open-run-logs">
               Логи на отдельной странице
             </LinkAsButton>
@@ -49,18 +92,18 @@ export function RunDetailPage() {
       {run.status === "failed" ? (
         <Card className="p-4" data-testid="run-error-detail">
           <p className="font-medium">Синхронизация завершилась с ошибкой</p>
-          <p className="mt-1 text-sm text-muted-foreground">Не удалось загрузить данные в PostgreSQL. Проверьте маппинг и структуру целевой таблицы.</p>
+          <p className="mt-1 text-sm text-muted-foreground">{item.error_message ?? "Подробности см. в логах Dagster / сообщении выше."}</p>
         </Card>
       ) : null}
       {run.status === "partial" ? (
         <Card className="p-4" data-testid="run-partial-detail">
-          <p className="text-sm">Загрузка выполнена частично: {run.records - run.issues} записей загружено, {run.issues} требуют проверки.</p>
+          <p className="text-sm">Загрузка выполнена частично.</p>
           <LinkAsButton href="/issues" variant="outline" className="mt-2" data-testid="button-run-to-issues">
             Открыть проблемные записи
           </LinkAsButton>
         </Card>
       ) : null}
-      <LogViewer logs={runLogsExtended} />
+      <LogViewer logs={logs} />
     </div>
   );
 }

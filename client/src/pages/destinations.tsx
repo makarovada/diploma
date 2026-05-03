@@ -1,7 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
-import { destinations } from "@/lib/mock-data";
+import { destinations as demoDestinations } from "@/lib/mock-data";
+import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
+import { fetchDestinationsCatalog, mapDestinationCatalogItem } from "@/lib/api-datanorma";
+import { withApiOrDemo } from "@/lib/demo-fallback";
+import { queryKeys } from "@/lib/query-keys";
 
 const statusRu: Record<string, string> = {
   ok: "Доступен",
@@ -11,20 +15,37 @@ const statusRu: Record<string, string> = {
 
 export function DestinationsPage() {
   const query = useQuery({
-    queryKey: ["destinations"],
-    queryFn: async () => {
-      await new Promise((r) => setTimeout(r, 150));
-      return destinations;
-    },
+    queryKey: queryKeys.destinations.list(),
+    queryFn: () =>
+      withApiOrDemo(async () => {
+        const { items } = await fetchDestinationsCatalog();
+        return items.map(mapDestinationCatalogItem);
+      }, demoDestinations),
   });
 
-  if (query.isLoading) return <div data-testid="state-loading-destinations" className="p-4">Загрузка приёмников…</div>;
+  if (query.isPending) return <div data-testid="state-loading-destinations" className="p-4">Загрузка приёмников…</div>;
   if (query.isError) return <div data-testid="state-error-destinations" className="p-4">Ошибка загрузки приёмников.</div>;
-  const list = query.data ?? [];
+
+  const pack = query.data;
+  const list = pack?.value ?? [];
+  const isDemo = pack?.isDemoFallback ?? false;
+
+  if (list.length === 0) {
+    return (
+      <div className="p-4">
+        <PageHeader title="Приёмники" description="Системы и хранилища для нормализованных данных" breadcrumbs="Интеграции / Приёмники" actions={<LinkAsButton href="/destinations/new" data-testid="button-add-destination">Добавить приёмник</LinkAsButton>} />
+        {isDemo ? <DemoFallbackBanner /> : null}
+        <div data-testid="state-empty-destinations" className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+          Нет записей в каталоге приёмников.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4">
       <PageHeader title="Приёмники" description="Системы и хранилища для нормализованных данных" breadcrumbs="Интеграции / Приёмники" actions={<LinkAsButton href="/destinations/new" data-testid="button-add-destination">Добавить приёмник</LinkAsButton>} />
+      {isDemo ? <DemoFallbackBanner /> : null}
       <div className="overflow-auto rounded-lg border" data-testid="table-destinations">
         <table className="w-full min-w-[880px] text-left text-sm" aria-label="Таблица приёмников">
           <thead className="bg-muted">
@@ -48,7 +69,7 @@ export function DestinationsPage() {
                 <td>{d.lastUsed}</td>
                 <td>{d.connectionCount}</td>
                 <td>
-                  <LinkAsButton href={`/destinations/${d.id}`} variant="outline" className="px-2 py-1 text-xs" data-testid={`button-open-destination-${d.id}`}>
+                  <LinkAsButton href={`/destinations/${encodeURIComponent(d.id)}`} variant="outline" className="px-2 py-1 text-xs" data-testid={`button-open-destination-${d.id}`}>
                     Открыть
                   </LinkAsButton>
                 </td>

@@ -1,8 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { appUsers } from "@/lib/mock-data";
+import { appUsers as demoUsers } from "@/lib/mock-data";
+import { fetchAdminUsers } from "@/lib/api-datanorma";
+import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
+import { withApiOrDemo } from "@/lib/demo-fallback";
+import { queryKeys } from "@/lib/query-keys";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import type { AppUser } from "@/lib/types";
 
 const roleRu: Record<string, string> = {
   platform_admin: "Администратор платформы",
@@ -17,21 +22,53 @@ const statusRu: Record<string, string> = {
   disabled: "Отключён",
 };
 
+function mapApiUser(u: { id: number; username: string; email: string | null; roles: string[] }): AppUser {
+  const roleRaw = u.roles[0] ?? "viewer";
+  const role =
+    roleRaw === "platform_admin" || roleRaw === "data_integrator" || roleRaw === "analyst" || roleRaw === "viewer" ? roleRaw : "viewer";
+  return {
+    id: String(u.id),
+    name: u.username,
+    email: u.email ?? "",
+    role,
+    workspace: "—",
+    status: "active",
+    lastActive: "—",
+  };
+}
+
 export function UsersPage() {
   const query = useQuery({
-    queryKey: ["users"],
-    queryFn: async () => {
-      await new Promise((r) => setTimeout(r, 200));
-      return appUsers;
-    },
+    queryKey: queryKeys.users.list(),
+    queryFn: () =>
+      withApiOrDemo(async () => {
+        const { users } = await fetchAdminUsers();
+        return users.map((u) => mapApiUser(u));
+      }, demoUsers),
   });
 
-  if (query.isLoading) return <div data-testid="state-loading-users" className="p-4">Загрузка пользователей…</div>;
+  if (query.isPending) return <div data-testid="state-loading-users" className="p-4">Загрузка пользователей…</div>;
   if (query.isError || !query.data) return <div data-testid="state-error-users" className="p-4">Ошибка загрузки.</div>;
+
+  const rows = query.data.value;
+  const isDemo = query.data.isDemoFallback;
+
+  if (rows.length === 0) {
+    return (
+      <div className="p-4">
+        <PageHeader title="Пользователи и роли" description="Доступ к интеграциям и администрированию" breadcrumbs="Администрирование / Пользователи" actions={<Button data-testid="button-invite-user">Пригласить пользователя</Button>} />
+        {isDemo ? <DemoFallbackBanner /> : null}
+        <div data-testid="state-empty-users" className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
+          Пользователей не найдено.
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="p-4">
       <PageHeader title="Пользователи и роли" description="Доступ к интеграциям и администрированию" breadcrumbs="Администрирование / Пользователи" actions={<Button data-testid="button-invite-user">Пригласить пользователя</Button>} />
+      {isDemo ? <DemoFallbackBanner /> : null}
       <div className="overflow-auto rounded-lg border" data-testid="table-users">
         <table className="w-full min-w-[900px] text-left text-sm" aria-label="Пользователи">
           <thead className="bg-muted">
@@ -46,7 +83,7 @@ export function UsersPage() {
             </tr>
           </thead>
           <tbody>
-            {query.data.map((u) => (
+            {rows.map((u) => (
               <tr key={u.id} className="border-t" data-testid={`row-user-${u.id}`}>
                 <td>{u.name}</td>
                 <td>{u.email}</td>

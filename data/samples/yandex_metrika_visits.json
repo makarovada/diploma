@@ -1,0 +1,14 @@
+[
+  {
+    "visit_id": "1682914530123|1",
+    "client_id": "ym_client_abc001",
+    "date_time": "2026-05-01T10:15:30+03:00",
+    "traffic_source": "organic",
+    "utm_source": "yandex",
+    "utm_medium": "cpc",
+    "utm_campaign": "spring_sale",
+    "device_category": "mobile",
+    "browser": "Chrome",
+    "region_country": "Russia"
+  }
+]

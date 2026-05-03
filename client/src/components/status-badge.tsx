@@ -8,6 +8,7 @@ const statusMeta: Record<Status, { label: string; className: string; Icon: typeo
   failed: { label: "Ошибка", className: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300", Icon: CircleX },
   running: { label: "Выполняется", className: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300", Icon: Loader2 },
   queued: { label: "В очереди", className: "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200", Icon: Clock3 },
+  cancelled: { label: "Отменён", className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200", Icon: CirclePause },
   paused: { label: "Пауза", className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200", Icon: CirclePause },
   draft: { label: "Черновик", className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200", Icon: Activity },
   disabled: { label: "Отключено", className: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200", Icon: AlertTriangle },

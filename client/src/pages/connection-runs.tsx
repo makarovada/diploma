@@ -1,21 +1,42 @@
+import { useQuery } from "@tanstack/react-query";
 import { ConnectionSubNav } from "@/components/connection-sub-nav";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
-import { getRunsForConnection } from "@/lib/mock-data";
 import { useConnectionFromPath } from "@/hooks/use-connection-from-path";
 import { Card } from "@/components/ui/card";
+import { fetchV1Syncs, mapV1SyncToRun } from "@/lib/api-datanorma";
+import { queryKeys } from "@/lib/query-keys";
 
 export function ConnectionRunsPage() {
-  const { connection, id } = useConnectionFromPath();
-  if (!connection) {
+  const { connection, id, isLoading, isError } = useConnectionFromPath();
+  const runsQuery = useQuery({
+    queryKey: queryKeys.connectionRuns.byConnection(id),
+    queryFn: async () => {
+      const { items } = await fetchV1Syncs(200);
+      return items
+        .filter((s) => s.connection_id != null && String(s.connection_id) === id)
+        .sort((a, b) => {
+          const ta = a.started_at ? new Date(a.started_at).getTime() : 0;
+          const tb = b.started_at ? new Date(b.started_at).getTime() : 0;
+          return tb - ta;
+        })
+        .map(mapV1SyncToRun);
+    },
+    enabled: Boolean(id),
+  });
+
+  if (isLoading) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
+  if (isError || !connection) {
     return (
       <div className="p-4">
         Не найдено. <LinkAsButton href="/connections">К списку</LinkAsButton>
       </div>
     );
   }
-  const connRuns = getRunsForConnection(id);
+
+  const connRuns = runsQuery.data ?? [];
+
   return (
     <div className="space-y-4 p-4">
       <PageHeader title="Запуски подключения" description={connection.name} breadcrumbs="Интеграции / Подключения / Запуски" />
@@ -34,23 +55,37 @@ export function ConnectionRunsPage() {
             </tr>
           </thead>
           <tbody>
-            {connRuns.map((r) => (
-              <tr key={r.id} className="border-t" data-testid={`row-conn-run-${r.id}`}>
-                <td className="font-mono text-xs">{r.id}</td>
-                <td>
-                  <StatusBadge status={r.status} />
-                </td>
-                <td>{r.startedAt}</td>
-                <td>{r.duration}</td>
-                <td>{r.records}</td>
-                <td>{r.issues}</td>
-                <td>
-                  <LinkAsButton href={`/runs/${r.id}`} variant="outline" className="px-2 py-1 text-xs" data-testid={`button-open-run-${r.id}`}>
-                    Открыть
-                  </LinkAsButton>
+            {runsQuery.isPending ? (
+              <tr>
+                <td colSpan={7} className="p-4 text-muted-foreground">
+                  Загрузка запусков…
                 </td>
               </tr>
-            ))}
+            ) : connRuns.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="p-4 text-muted-foreground">
+                  Нет запусков для этого подключения.
+                </td>
+              </tr>
+            ) : (
+              connRuns.map((r) => (
+                <tr key={r.id} className="border-t" data-testid={`row-conn-run-${r.id}`}>
+                  <td className="font-mono text-xs">{r.id}</td>
+                  <td>
+                    <StatusBadge status={r.status} />
+                  </td>
+                  <td>{r.startedAt}</td>
+                  <td>{r.duration}</td>
+                  <td>{r.records}</td>
+                  <td>{r.issues}</td>
+                  <td>
+                    <LinkAsButton href={`/runs/${r.id}`} variant="outline" className="px-2 py-1 text-xs" data-testid={`button-open-run-${r.id}`}>
+                      Открыть
+                    </LinkAsButton>
+                  </td>
+                </tr>
+              ))
+            )}
           </tbody>
         </table>
       </Card>

@@ -1,15 +1,32 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import { issues } from "@/lib/mock-data";
+import { issues as demoIssues } from "@/lib/mock-data";
+import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { LinkAsButton } from "@/components/link-as-button";
+import { fetchNormalizationIssues, mapNormRowToIssue } from "@/lib/api-datanorma";
+import { withApiOrDemo } from "@/lib/demo-fallback";
+import { queryKeys } from "@/lib/query-keys";
 
 export function IssueDetailPage() {
   const [, params] = useRoute("/issues/:issueId");
-  const issue = issues.find((i) => i.id === params?.issueId);
+  const issueId = params?.issueId ?? "";
 
-  if (!issue) {
+  const query = useQuery({
+    queryKey: queryKeys.issues.detail(issueId),
+    queryFn: () =>
+      withApiOrDemo(async () => {
+        const { rows } = await fetchNormalizationIssues(200);
+        const row = rows.find((r) => String(r.id) === issueId);
+        if (!row) throw new Error("not_found");
+        return mapNormRowToIssue(row);
+      }, demoIssues.find((i) => i.id === issueId) ?? demoIssues[0]),
+    enabled: Boolean(issueId),
+  });
+
+  if (!issueId) {
     return (
       <div className="p-4" data-testid="state-not-found-issue">
         Запись не найдена. <LinkAsButton href="/issues">К списку</LinkAsButton>
@@ -17,8 +34,22 @@ export function IssueDetailPage() {
     );
   }
 
+  if (query.isPending) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
+  if (query.isError || !query.data) return <div className="p-4">Ошибка загрузки.</div>;
+
+  const issue = query.data.value;
+  const isDemo = query.data.isDemoFallback;
+  if (!issue) {
+    return (
+      <div className="p-4" data-testid="state-not-found-issue">
+        Запись не найдена (нет в последних 200 записях). <LinkAsButton href="/issues">К списку</LinkAsButton>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 p-4">
+      {isDemo ? <DemoFallbackBanner /> : null}
       <PageHeader title={`Проблема ${issue.id}`} description={`${issue.type} · ${issue.connection}`} breadcrumbs="Данные / Проблемные записи / Детали" />
       <div className="flex flex-wrap gap-2">
         <LinkAsButton href="/issues" variant="outline" data-testid="button-back-issues">
@@ -39,10 +70,10 @@ export function IssueDetailPage() {
           <strong>Поток:</strong> {issue.stream} · <strong>Поле:</strong> {issue.field}
         </p>
         <p className="text-sm">
-          <strong>Исходное значение:</strong> <span className="font-mono">{issue.original}</span>
+          <strong>Сообщение:</strong> <span className="font-mono">{issue.original}</span>
         </p>
         <p className="text-sm">
-          <strong>Предложение:</strong> <span className="font-mono">{issue.suggested}</span>
+          <strong>Связанная запись:</strong> <span className="font-mono">{issue.suggested}</span>
         </p>
         <p className="text-sm text-muted-foreground">Статус: {issue.status}</p>
       </Card>

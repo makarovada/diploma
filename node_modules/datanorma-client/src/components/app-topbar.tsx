@@ -1,4 +1,5 @@
-import { Bell, Menu, Search } from "lucide-react";
+import { Bell, LogOut, Menu, Search } from "lucide-react";
+import { useAuth } from "@/app/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LinkAsButton } from "@/components/link-as-button";
@@ -10,6 +11,15 @@ export function AppTopbar({
   onOpenMobileNav: () => void;
   onOpenCommandPalette: () => void;
 }) {
+  const { user, logout } = useAuth();
+  const initials =
+    user?.username
+      .split(/[^a-zA-Zа-яА-ЯёЁ0-9]+/)
+      .filter(Boolean)
+      .slice(0, 2)
+      .map((s) => s[0]?.toUpperCase() ?? "")
+      .join("") || user?.username.slice(0, 2).toUpperCase() || "—";
+
   return (
     <header className="border-b bg-background px-4 py-3" data-testid="topbar-main">
       <div className="flex flex-wrap items-center gap-2">
@@ -60,8 +70,21 @@ export function AppTopbar({
         <Button variant="outline" data-testid="button-notifications" aria-label="Уведомления">
           <Bell className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" className="hidden h-9 w-9 rounded-full border p-0 sm:inline-flex" data-testid="button-user-menu" aria-label="Меню пользователя">
-          МИ
+        <span className="hidden max-w-[10rem] truncate text-xs text-muted-foreground sm:inline" title={user?.username}>
+          {user?.username}
+        </span>
+        <Button
+          type="button"
+          variant="outline"
+          className="hidden h-9 min-w-9 rounded-full border px-2 sm:inline-flex"
+          data-testid="button-user-menu"
+          aria-label="Текущий пользователь"
+          title={user?.username}
+        >
+          {initials}
+        </Button>
+        <Button type="button" variant="outline" onClick={() => logout()} data-testid="button-logout" aria-label="Выйти">
+          <LogOut className="h-4 w-4" />
         </Button>
       </div>
     </header>

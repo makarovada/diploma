@@ -1,7 +1,7 @@
 """Phase 1: Ingest-style raw staging names, _ingest_* meta columns, sync_state per stream, warehouse _ingest_loaded_at.
 
 Revision ID: 002_phase1_ingest
-Revises: 001_phase_a
+Revises: 002_phase1_airbyte
 Create Date: 2026-03-29
 
 """
@@ -15,7 +15,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "002_phase1_ingest"
-down_revision: Union[str, None] = "001_phase_a"
+down_revision: Union[str, None] = "002_phase1_airbyte"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -11,7 +11,7 @@
 ## 2. Контекст и границы MVP
 
 DataNorma в текущей версии:
-- поддерживает интеграции из `Ozon`, `1C`, `Google Sheets` и `REST Builder`;
+- поддерживает интеграции из `Ozon`, `1C`, `Google Sheets`, `Яндекс Метрика` и `REST Builder`;
 - ведет пайплайн `sync_catalog -> raw -> staging -> normalized -> typed -> warehouse -> dbt`;
 - использует PostgreSQL как основной destination;
 - предоставляет web UI (`/app/*`) и REST API (`/api/*`, `/api/v1/*`);
@@ -48,6 +48,7 @@ DataNorma в текущей версии:
 - `OzonSource`: `check/discover/read`, API-режим и fallback на sample.
 - `OneCSource`: CSV/XLSX, support `DATANORMA_1C_EXPORT_PATH`.
 - `GoogleSheetsSource`: `gspread` + fallback на sample.
+- `YandexMetrikaSource`: `check/discover/read`, OAuth + Management API или полный набор `data/samples/yandex_metrika_*.json`.
 - `rest_builder`: динамический source по YAML-схеме.
 
 ### 4.2 Оркестрация и pipeline (Dagster)
@@ -71,6 +72,7 @@ DataNorma в текущей версии:
 - Таблица состояния синхронизации: `sync_state`
 - Типизированный слой: `typed_canonical_sales`
 - Витрина: `canonical_sales`
+- Маркетинг / веб-события: `canonical_marketing_events` (Яндекс Метрика и др., см. `docs/yandex_metrika_connector.md`)
 
 ### 4.4 Веб и API
 
@@ -475,8 +477,10 @@ Demo users:
 - `POST /api/admin/integration-config`
 
 5. API v1 orchestration surface
-- `GET /api/v1/connections`
-- `POST /api/v1/connections`
+- `GET /api/v1/sync-streams` / `POST /api/v1/sync-streams` (каталог `sync_state` / курсоры)
+- `GET|POST /api/v1/sources`, `GET|PATCH|DELETE /api/v1/sources/{id}`, `POST .../check`, `POST .../discover`
+- `GET|POST /api/v1/destinations`, `GET|PATCH|DELETE /api/v1/destinations/{id}`, `POST .../check`
+- `GET|POST /api/v1/connections`, `GET|PATCH|DELETE /api/v1/connections/{id}`, `POST .../trigger`, `POST .../pause`, `POST .../resume`
 - `GET /api/v1/syncs`
 - `POST /api/v1/syncs/trigger` (creates `sync_run` and launches Dagster run)
 - `GET /api/v1/syncs/{run_id}`

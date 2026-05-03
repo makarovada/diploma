@@ -16,13 +16,13 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "view_sales_rows": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
     "export_sales_csv": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
     # Staging / сырой слой
-    "view_staging_counts": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
+    "view_staging_counts": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
     "view_staging_ozon_sample": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_staging_1c_sample": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_staging_sheet_sample": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     # Операции и состояние интеграций
     "view_sync_state": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
-    "view_normalization_issues": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
+    "view_normalization_issues": ALL_ROLES,
     "view_mapping_profiles": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "edit_mapping_profiles": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     # Справочники (чтение для аналитика)
@@ -47,7 +47,8 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "view_connections_overview": ALL_ROLES,
     "edit_connections_builder": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_destinations_page": ALL_ROLES,
-    # API v1: orchestration and sync management
+    # API v1: чтение каталога подключений и истории sync (SPA); запись — отдельные операции
+    "view_api_v1_catalog": ALL_ROLES,
     "manage_connections_api": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "manage_syncs_api": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_workspaces": ALL_ROLES,
@@ -86,8 +87,9 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "view_connections_overview": "Обзор подключений (как Connections в Ingest)",
     "edit_connections_builder": "No-code редактор Connections (stream/sync/cursor)",
     "view_destinations_page": "Назначения данных / warehouse (как Destinations)",
-    "manage_connections_api": "API v1: управление connections",
-    "manage_syncs_api": "API v1: управление/просмотр sync jobs",
+    "view_api_v1_catalog": "API v1: каталог sync-streams / sources / destinations / connections и запусков sync_run",
+    "manage_connections_api": "API v1: sync-streams и CRUD sources/destinations/connections",
+    "manage_syncs_api": "API v1: запуск sync (trigger) и управление",
     "view_workspaces": "Просмотр organizations/workspaces",
     "manage_workspaces": "Управление organizations/workspaces",
     "view_analyst_cabinet": "Личный кабинет аналитика",

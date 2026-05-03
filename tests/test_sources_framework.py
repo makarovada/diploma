@@ -24,6 +24,24 @@ def test_records_merge_schema() -> None:
     assert "anyOf" in sch["properties"]["x"] or sch["properties"]["x"].get("type") in ("integer", "string")
 
 
+def test_create_yandex_metrika_source_discover(tmp_path: Path) -> None:
+    samples = tmp_path / "data" / "samples"
+    samples.mkdir(parents=True)
+    root = Path(__file__).resolve().parent.parent
+    for fname in (
+        "yandex_metrika_summary.json",
+        "yandex_metrika_visits.json",
+        "yandex_metrika_hits.json",
+        "yandex_metrika_goals_reaches.json",
+    ):
+        src_f = root / "data" / "samples" / fname
+        (samples / fname).write_text(src_f.read_text(encoding="utf-8"), encoding="utf-8")
+    paths = DataPathsResource(repo_root=str(tmp_path))
+    src = create_source("yandex_metrika", paths=paths)
+    cat = src.discover()
+    assert {s.name for s in cat.streams} == {"summary", "visits", "hits", "goals_reaches"}
+
+
 def test_create_ozon_source_discover(tmp_path: Path) -> None:
     samples = tmp_path / "data" / "samples"
     samples.mkdir(parents=True)

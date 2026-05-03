@@ -40,7 +40,7 @@
 
 Минимальные проверки:
 - UI: `/app/sources/new` (check + discover);
-- API: создание/обновление связи через `/api/v1/connections`.
+- API: потоки `sync_state` через `/api/v1/sync-streams`; доменные connections — `/api/v1/connections`.
 
 Ожидаемо:
 - `check` подтверждает доступность интеграции;

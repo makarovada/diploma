@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -19,10 +21,16 @@ def client():
     app.dependency_overrides.clear()
 
 
-def test_password_sha256_roundtrip() -> None:
+def test_password_bcrypt_roundtrip() -> None:
     h = hash_password("AnalystDemo2026")
     assert verify_password("AnalystDemo2026", h)
     assert not verify_password("wrong", h)
+
+
+def test_password_legacy_sha256_hex() -> None:
+    legacy = hashlib.sha256("AnalystDemo2026".encode("utf-8")).hexdigest()
+    assert verify_password("AnalystDemo2026", legacy)
+    assert not verify_password("wrong", legacy)
 
 
 def test_matrix_has_label_for_every_operation() -> None:

@@ -36,7 +36,7 @@ from datanorma.web.mapping_profiles import (
     resolve_workspace_id,
     rollback_to_version,
 )
-from datanorma.web.passwords import hash_password, verify_password
+from datanorma.web.passwords import hash_password, is_legacy_sha256_hash, verify_password
 from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
 from datanorma.web.sync_runs import (
     SyncRunError,
@@ -49,7 +49,7 @@ from datanorma.web.sync_runs import (
     refresh_sync_run_status,
     resolve_connection,
 )
-from datanorma.web.users_repo import list_roles, list_users_with_roles, load_user_by_username
+from datanorma.web.users_repo import list_roles, list_users_with_roles, load_user_by_username, update_user_password_hash
 from datanorma.web.web_auth import COOKIE_NAME, get_web_user_optional, require_web_op
 
 _TEMPLATES = Path(__file__).resolve().parent / "templates"
@@ -289,6 +289,8 @@ def page_login_post(
             },
             status_code=401,
         )
+    if is_legacy_sha256_hash(dbu.password_hash):
+        update_user_password_hash(conn, dbu.id, hash_password(password))
     token = create_access_token(username=dbu.username, roles=dbu.roles)
     resp = RedirectResponse(n, status_code=302)
     resp.set_cookie(
@@ -991,8 +993,9 @@ def page_run_trigger(
     note: str = Form(default=""),
 ):
     try:
-        resolved_id, integration_code, stream_name = resolve_connection(
+        resolved_id, domain_cid, integration_code, stream_name = resolve_connection(
             conn,
+            domain_connection_id=None,
             connection_id=connection_id,
             integration_code=None,
             stream_name=None,
@@ -1017,6 +1020,7 @@ def page_run_trigger(
     row = create_sync_run(
         conn,
         connection_id=resolved_id,
+        domain_connection_id=domain_cid,
         integration_code=integration_code,
         stream_name=stream_name,
         triggered_by=user.username,

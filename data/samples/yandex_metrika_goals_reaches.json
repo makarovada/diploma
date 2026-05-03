@@ -1,0 +1,11 @@
+[
+  {
+    "goal_id": "1",
+    "goal_name": "Заказ",
+    "visit_id": "1682914530123|1",
+    "client_id": "ym_client_abc001",
+    "reach_datetime": "2026-05-01T10:20:00+03:00",
+    "revenue": 1500.5,
+    "currency": "RUB"
+  }
+]

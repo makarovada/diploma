@@ -6,6 +6,7 @@ from datanorma.sources.onec import OneCSource
 from datanorma.sources.ozon import OzonSource
 from datanorma.sources.registry import SOURCE_KINDS, create_source
 from datanorma.sources.sheets import GoogleSheetsSource
+from datanorma.sources.yandex_metrika import YandexMetrikaSource
 
 __all__ = [
     "SOURCE_KINDS",
@@ -16,6 +17,7 @@ __all__ = [
     "RestBuilderSource",
     "RestConnectorYaml",
     "SourceCheckResult",
+    "YandexMetrikaSource",
     "create_source",
     "load_rest_connector_yaml",
 ]

@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     datanorma_auto_create_tables: str = ""
     datanorma_jwt_secret: str = ""
     datanorma_jwt_expire_hours: int = 24
+    # development | production — в production обязательны DATANORMA_JWT_SECRET и DATANORMA_CORS_ORIGINS
+    datanorma_environment: str = "development"
+    # Список origin через запятую (нельзя * при credentials=True)
+    datanorma_cors_origins: str = ""
     datanorma_dagster_ui_url: str = "http://127.0.0.1:3000"
     datanorma_sms_webhook_url: str = ""
     datanorma_sms_webhook_token: str = ""
@@ -54,6 +58,9 @@ class Settings(BaseSettings):
     gspread_worksheet: str = "0"
 
     datanorma_1c_export_path: str = ""
+
+    yandex_metrika_oauth_token: str = ""
+    yandex_metrika_counter_id: str = ""
 
     def warehouse_auto_ddl_enabled(self) -> bool:
         v = self.datanorma_auto_create_tables.strip().lower()

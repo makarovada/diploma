@@ -14,7 +14,10 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# Только каталог сборки у корня репозитория; не игнорировать client/src/lib и т.п.
+/lib/
+!client/src/lib/
+!client/src/lib/**
 lib64/
 parts/
 sdist/

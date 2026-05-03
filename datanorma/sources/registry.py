@@ -8,8 +8,9 @@ from datanorma.sources.builder import RestBuilderSource, load_rest_connector_yam
 from datanorma.sources.onec import OneCSource
 from datanorma.sources.ozon import OzonSource
 from datanorma.sources.sheets import GoogleSheetsSource
+from datanorma.sources.yandex_metrika import YandexMetrikaSource
 
-SOURCE_KINDS: tuple[str, ...] = ("ozon", "1c", "google_sheet", "rest_builder")
+SOURCE_KINDS: tuple[str, ...] = ("ozon", "1c", "google_sheet", "rest_builder", "yandex_metrika")
 
 
 def create_source(
@@ -36,4 +37,8 @@ def create_source(
             raise ValueError("Для rest_builder нужен yaml_text (Connector Builder YAML)")
         cfg = load_rest_connector_yaml(yaml_text)
         return RestBuilderSource(cfg)
+    if k in ("yandex_metrika", "yandexmetrika", "metrika", "ya_metrika"):
+        if paths is None:
+            raise ValueError("Для yandex_metrika нужен paths: DataPathsResource")
+        return YandexMetrikaSource(paths)
     raise ValueError(f"Неизвестный тип источника: {kind!r}. Допустимо: {SOURCE_KINDS}")

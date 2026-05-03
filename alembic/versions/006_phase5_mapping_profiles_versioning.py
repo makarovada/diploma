@@ -28,6 +28,10 @@ def _cols(bind, table: str) -> set[str]:
 
 
 def upgrade() -> None:
+    # Таблица alembic_version по умолчанию: version_num VARCHAR(32). Идентификаторы ревизий
+    # (006_phase5_mapping_profiles_versioning, 007_phase6_…) длиннее — без расширения UPDATE падает.
+    op.execute(sa.text("ALTER TABLE alembic_version ALTER COLUMN version_num TYPE VARCHAR(128)"))
+
     bind = op.get_bind()
     tables = _tables(bind)
 

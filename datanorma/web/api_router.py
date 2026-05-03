@@ -22,7 +22,7 @@ from datanorma.web.mapping_profiles import (
     resolve_workspace_id,
     rollback_to_version,
 )
-from datanorma.web.passwords import verify_password
+from datanorma.web.passwords import hash_password, is_legacy_sha256_hash, verify_password
 from datanorma.web.rbac_matrix import matrix_payload
 from datanorma.web.sync_runs import (
     SyncRunError,
@@ -36,7 +36,13 @@ from datanorma.web.sync_runs import (
     resolve_connection,
 )
 from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
-from datanorma.web.users_repo import list_roles, list_users_with_roles, load_user_by_username
+from datanorma.web.api_elt import register_elt_routes
+from datanorma.web.users_repo import (
+    list_roles,
+    list_users_with_roles,
+    load_user_by_username,
+    update_user_password_hash,
+)
 
 router = APIRouter(tags=["api"])
 v1 = APIRouter(prefix="/v1", tags=["api-v1"])
@@ -52,6 +58,8 @@ def auth_login(body: LoginBody, conn: Annotated[Connection, Depends(get_conn)]) 
     user = load_user_by_username(conn, body.username)
     if user is None or not verify_password(body.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
+    if is_legacy_sha256_hash(user.password_hash):
+        update_user_password_hash(conn, user.id, hash_password(body.password))
     token = create_access_token(username=user.username, roles=user.roles)
     return {"access_token": token, "token_type": "bearer"}
 
@@ -118,6 +126,70 @@ def data_staging_counts(
         "raw_1c_orders_staging": c1,
         "raw_google_sheet_orders_staging": sh,
     }
+
+
+@router.get("/data/destinations-catalog")
+def data_destinations_catalog(
+    _: Annotated[AuthUser, Depends(require_operation("view_destinations_page"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    """Каталог приёмников для React SPA (аналог данных на Jinja /app/destinations)."""
+    t = warehouse_table_sql()
+    n_rows = int(conn.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar_one())
+    sync_n = int(conn.execute(text("SELECT COUNT(*) FROM sync_state")).scalar_one())
+    last_u = conn.execute(text("SELECT MAX(updated_at) FROM sync_state")).scalar()
+    last_label = "—"
+    if last_u is not None:
+        last_label = last_u.isoformat() if hasattr(last_u, "isoformat") else str(last_u)
+
+    items: list[dict[str, Any]] = [
+        {
+            "id": "postgres",
+            "name": "PostgreSQL (warehouse)",
+            "type": "PostgreSQL",
+            "status": "ok",
+            "schema_or_db": f"warehouse / {t}",
+            "last_used_label": last_label,
+            "connection_count": sync_n,
+        },
+        {
+            "id": "csv",
+            "name": "CSV file",
+            "type": "CSV",
+            "status": "ok",
+            "schema_or_db": "экспорт /api/data/export-sales-csv",
+            "last_used_label": "—",
+            "connection_count": 0,
+        },
+        {
+            "id": "xlsx",
+            "name": "Excel (.xlsx)",
+            "type": "XLSX",
+            "status": "ok",
+            "schema_or_db": "файл (Jinja /app/warehouse)",
+            "last_used_label": "—",
+            "connection_count": 0,
+        },
+        {
+            "id": "json",
+            "name": "JSON",
+            "type": "JSON",
+            "status": "ok",
+            "schema_or_db": "API-friendly выгрузка",
+            "last_used_label": "—",
+            "connection_count": 0,
+        },
+        {
+            "id": "xml",
+            "name": "XML",
+            "type": "XML",
+            "status": "ok",
+            "schema_or_db": "legacy / EDI",
+            "last_used_label": "—",
+            "connection_count": 0,
+        },
+    ]
+    return {"items": items, "warehouse_row_count": n_rows}
 
 
 @router.get("/data/staging-ozon-sample")
@@ -464,7 +536,10 @@ class ConnectionUpsertBody(BaseModel):
 
 
 class SyncTriggerBody(BaseModel):
+    """connection_id — legacy: id строки sync_state; domain_connection_id — логический connection (Фаза 4)."""
+
     connection_id: int | None = None
+    domain_connection_id: int | None = None
     integration_code: str | None = Field(default=None, max_length=64)
     stream_name: str | None = Field(default=None, max_length=128)
     note: str | None = Field(default=None, max_length=512)
@@ -477,22 +552,23 @@ class WorkspaceCreateBody(BaseModel):
     workspace_name: str = Field(min_length=1, max_length=255)
 
 
-@v1.get("/connections")
-def v1_connections_list(
-    _: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
+@v1.get("/sync-streams")
+def v1_sync_streams_list(
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
+    """Каталог потоков sync_state (курсоры/кэш); доменные connections — GET /api/v1/connections."""
     rows = conn.execute(
         text(
-            "SELECT integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
+            "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
             "last_success_at, updated_at FROM sync_state ORDER BY integration_code, stream_name"
         )
     ).mappings().all()
     return {"items": [dict(r) for r in rows]}
 
 
-@v1.post("/connections")
-def v1_connections_upsert(
+@v1.post("/sync-streams")
+def v1_sync_streams_upsert(
     body: ConnectionUpsertBody,
     _: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
     conn: Annotated[Connection, Depends(get_conn)],
@@ -520,7 +596,7 @@ def v1_connections_upsert(
 
 @v1.get("/syncs")
 def v1_syncs_list(
-    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
     limit: int = 50,
 ) -> dict[str, Any]:
@@ -534,8 +610,9 @@ def v1_sync_trigger(
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     try:
-        connection_id, integration_code, stream_name = resolve_connection(
+        connection_id, domain_cid, integration_code, stream_name = resolve_connection(
             conn,
+            domain_connection_id=body.domain_connection_id,
             connection_id=body.connection_id,
             integration_code=(body.integration_code or "").strip() or None,
             stream_name=(body.stream_name or "").strip() or None,
@@ -552,6 +629,7 @@ def v1_sync_trigger(
     row = create_sync_run(
         conn,
         connection_id=connection_id,
+        domain_connection_id=domain_cid,
         integration_code=integration_code,
         stream_name=stream_name,
         triggered_by=user.username,
@@ -588,7 +666,7 @@ def v1_sync_trigger(
 @v1.get("/syncs/{run_id}")
 def v1_sync_get(
     run_id: int,
-    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     row = get_sync_run(conn, run_id)
@@ -600,7 +678,7 @@ def v1_sync_get(
 @v1.get("/syncs/{run_id}/status")
 def v1_sync_status(
     run_id: int,
-    _: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     row = get_sync_run(conn, run_id)
@@ -668,5 +746,7 @@ def v1_workspaces_create(
     )
     return {"status": "ok", "org_code": org_code, "workspace_code": ws_code}
 
+
+register_elt_routes(v1)
 
 router.include_router(v1)

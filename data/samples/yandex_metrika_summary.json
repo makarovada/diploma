@@ -1,0 +1,16 @@
+[
+  {
+    "date": "2026-05-01",
+    "visits": 1200,
+    "users": 980,
+    "bounce_rate": 0.42,
+    "pageviews": 3400
+  },
+  {
+    "date": "2026-05-02",
+    "visits": 1150,
+    "users": 910,
+    "bounce_rate": 0.39,
+    "pageviews": 3201
+  }
+]

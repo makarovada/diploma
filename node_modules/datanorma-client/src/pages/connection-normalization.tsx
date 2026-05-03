@@ -6,8 +6,9 @@ import { useConnectionFromPath } from "@/hooks/use-connection-from-path";
 import { LinkAsButton } from "@/components/link-as-button";
 
 export function ConnectionNormalizationPage() {
-  const { connection, id } = useConnectionFromPath();
-  if (!connection) {
+  const { connection, id, isLoading, isError } = useConnectionFromPath();
+  if (isLoading) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
+  if (isError || !connection) {
     return (
       <div className="p-4">
         Не найдено. <LinkAsButton href="/connections">К списку</LinkAsButton>

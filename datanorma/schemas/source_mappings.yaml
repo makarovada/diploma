@@ -38,3 +38,71 @@ sources:
       amount: amount
       currency: currency_code
       channel: channel
+
+# Маркетинг / веб-аналитика → canonical_marketing_events_v1 (см. datanorma/normalization/marketing_events.py)
+marketing:
+  version: 1
+  canonical: canonical_marketing_events_v1
+  sources:
+    yandex_metrika:
+      source_system: yandex_metrika
+      streams:
+        summary:
+          event_type: summary_daily
+          source_record_id:
+            - counter_id
+            - literal:summary
+            - date
+          field_map:
+            date: event_datetime
+          copy_to_meta:
+            visits: visits
+            users: users
+            bounce_rate: bounce_rate
+            pageviews: pageviews
+        visits:
+          event_type: visit
+          source_record_id:
+            - counter_id
+            - literal:visit
+            - visit_id
+          field_map:
+            visit_id: visit_id
+            client_id: client_id
+            date_time: event_datetime
+            traffic_source: traffic_source
+            utm_source: utm_source
+            utm_medium: utm_medium
+            utm_campaign: utm_campaign
+            device_category: device
+            browser: browser
+            region_country: region
+        hits:
+          event_type: hit
+          source_record_id:
+            - counter_id
+            - literal:hit
+            - hit_id
+          field_map:
+            visit_id: visit_id
+            date_time: event_datetime
+          copy_to_meta:
+            hit_id: hit_id
+            url: url
+            title: title
+        goals_reaches:
+          event_type: goal_reach
+          source_record_id:
+            - counter_id
+            - literal:goal
+            - goal_id
+            - visit_id
+            - reach_datetime
+          field_map:
+            goal_id: goal_id
+            goal_name: goal_name
+            visit_id: visit_id
+            client_id: client_id
+            reach_datetime: event_datetime
+            revenue: revenue
+            currency: currency

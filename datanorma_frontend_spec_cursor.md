@@ -566,7 +566,7 @@ CTA:
 - Битрикс24;
 - amoCRM;
 - VK Реклама;
-- Unisender;
+- Яндекс Метрика;
 - Google Sheets;
 - CSV;
 - XLSX;

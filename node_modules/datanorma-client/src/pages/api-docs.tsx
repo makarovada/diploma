@@ -8,7 +8,8 @@ export function ApiDocsPage() {
       <PageHeader title="Документация API" description="DataNorma MVP · REST API v1 (мок)" breadcrumbs="Сервис / API" />
       <Card className="p-4 font-mono text-xs" data-testid="api-docs-content">
         <pre className="whitespace-pre-wrap">
-{`GET  /api/v1/connections
+{`GET  /api/v1/sync-streams
+GET  /api/v1/connections
 POST /api/v1/connections
 GET  /api/v1/runs/{id}
 GET  /api/v1/issues

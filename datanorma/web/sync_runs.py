@@ -187,16 +187,18 @@ def create_sync_run(
     stream_name: str | None,
     triggered_by: str,
     note: str | None = None,
+    domain_connection_id: int | None = None,
 ) -> dict[str, Any]:
     row = conn.execute(
         text(
-            "INSERT INTO sync_run (connection_id, integration_code, stream_name, status, triggered_by, meta, created_at, updated_at) "
-            "VALUES (:cid, :ic, :sn, 'queued', :tb, CAST(:meta AS jsonb), NOW(), NOW()) "
-            "RETURNING id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "INSERT INTO sync_run (connection_id, domain_connection_id, integration_code, stream_name, status, triggered_by, meta, created_at, updated_at) "
+            "VALUES (:cid, :dcid, :ic, :sn, 'queued', :tb, CAST(:meta AS jsonb), NOW(), NOW()) "
+            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {
             "cid": connection_id,
+            "dcid": domain_connection_id,
             "ic": integration_code,
             "sn": stream_name,
             "tb": triggered_by,
@@ -211,7 +213,7 @@ def mark_sync_run_running(conn: Connection, run_id: int, dagster_run_id: str) ->
         text(
             "UPDATE sync_run SET status = 'running', dagster_run_id = :drid, started_at = COALESCE(started_at, NOW()), "
             "updated_at = NOW(), error_message = NULL WHERE id = :id "
-            "RETURNING id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {"id": run_id, "drid": dagster_run_id},
@@ -224,7 +226,7 @@ def mark_sync_run_failed(conn: Connection, run_id: int, message: str) -> dict[st
         text(
             "UPDATE sync_run SET status = 'failed', finished_at = COALESCE(finished_at, NOW()), "
             "updated_at = NOW(), error_message = :msg WHERE id = :id "
-            "RETURNING id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {"id": run_id, "msg": message[:3000]},
@@ -235,37 +237,79 @@ def mark_sync_run_failed(conn: Connection, run_id: int, message: str) -> dict[st
 def resolve_connection(
     conn: Connection,
     *,
-    connection_id: int | None,
-    integration_code: str | None,
-    stream_name: str | None,
-) -> tuple[int | None, str | None, str | None]:
+    domain_connection_id: int | None = None,
+    connection_id: int | None = None,
+    integration_code: str | None = None,
+    stream_name: str | None = None,
+) -> tuple[int | None, int | None, str | None, str | None]:
+    """sync_state.id, domain connection.id, integration_code, stream_name."""
+    if domain_connection_id is not None:
+        row = conn.execute(
+            text(
+                "SELECT ss.id AS sync_id, s.connector_code AS ic, cs.stream_name AS sn, c.id AS dcid "
+                "FROM connection c "
+                "JOIN source s ON s.id = c.source_id "
+                "JOIN connection_stream cs ON cs.connection_id = c.id "
+                "LEFT JOIN sync_state ss ON ss.connection_stream_id = cs.id "
+                "WHERE c.id = :cid AND cs.is_enabled IS TRUE "
+                "ORDER BY cs.stream_name "
+                "LIMIT 1"
+            ),
+            {"cid": domain_connection_id},
+        ).mappings().first()
+        if row is None:
+            raise SyncRunError("domain connection has no enabled streams")
+        sid = row["sync_id"]
+        if sid is None:
+            raise SyncRunError("stream is not linked to sync_state")
+        return int(sid), int(row["dcid"]), str(row["ic"]), str(row["sn"])
+
     if connection_id is not None:
         row = conn.execute(
-            text("SELECT id, integration_code, stream_name FROM sync_state WHERE id = :id"),
+            text(
+                "SELECT ss.id, ss.integration_code, ss.stream_name, cs.connection_id AS domain_cid "
+                "FROM sync_state ss "
+                "LEFT JOIN connection_stream cs ON cs.id = ss.connection_stream_id "
+                "WHERE ss.id = :id"
+            ),
             {"id": connection_id},
         ).mappings().first()
         if row is None:
             raise SyncRunError("connection_id not found")
-        return int(row["id"]), str(row["integration_code"]), str(row["stream_name"])
+        dc = row["domain_cid"]
+        return (
+            int(row["id"]),
+            int(dc) if dc is not None else None,
+            str(row["integration_code"]),
+            str(row["stream_name"]),
+        )
     if integration_code and stream_name:
         row = conn.execute(
             text(
-                "SELECT id, integration_code, stream_name FROM sync_state "
-                "WHERE integration_code = :ic AND stream_name = :sn"
+                "SELECT ss.id, ss.integration_code, ss.stream_name, cs.connection_id AS domain_cid "
+                "FROM sync_state ss "
+                "LEFT JOIN connection_stream cs ON cs.id = ss.connection_stream_id "
+                "WHERE ss.integration_code = :ic AND ss.stream_name = :sn"
             ),
             {"ic": integration_code, "sn": stream_name},
         ).mappings().first()
         if row is None:
             raise SyncRunError("connection not found by integration_code/stream_name")
-        return int(row["id"]), str(row["integration_code"]), str(row["stream_name"])
-    return None, integration_code, stream_name
+        dc = row["domain_cid"]
+        return (
+            int(row["id"]),
+            int(dc) if dc is not None else None,
+            str(row["integration_code"]),
+            str(row["stream_name"]),
+        )
+    return None, None, integration_code, stream_name
 
 
 def list_sync_runs(conn: Connection, limit: int = 50) -> list[dict[str, Any]]:
     lim = max(1, min(limit, 500))
     rows = conn.execute(
         text(
-            "SELECT id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "SELECT id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at "
             "FROM sync_run ORDER BY id DESC LIMIT :lim"
         ),
@@ -277,7 +321,7 @@ def list_sync_runs(conn: Connection, limit: int = 50) -> list[dict[str, Any]]:
 def get_sync_run(conn: Connection, run_id: int) -> dict[str, Any] | None:
     row = conn.execute(
         text(
-            "SELECT id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "SELECT id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at "
             "FROM sync_run WHERE id = :id"
         ),
@@ -303,7 +347,7 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
             text(
                 "UPDATE sync_run SET status = :st, finished_at = COALESCE(:fa, finished_at, NOW()), "
                 "updated_at = NOW() WHERE id = :id "
-                "RETURNING id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+                "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
                 "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
             ),
             {"id": run["id"], "st": status, "fa": finished_at},
@@ -312,7 +356,7 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
     row = conn.execute(
         text(
             "UPDATE sync_run SET status = :st, updated_at = NOW() WHERE id = :id "
-            "RETURNING id, connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {"id": run["id"], "st": status},

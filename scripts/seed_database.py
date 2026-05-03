@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 import uuid
 from datetime import date, datetime, timedelta, timezone
@@ -17,16 +16,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
 from datanorma.config import get_settings
+from datanorma.web.passwords import hash_password
 
 _BATCH = uuid.UUID("aaaaaaaa-bbbb-cccc-dddd-000000000001")
 
 
 def _url() -> str:
     return get_settings().database_url
-
-
-def _ph(text_pw: str) -> str:
-    return hashlib.sha256(text_pw.encode("utf-8")).hexdigest()
 
 
 def _clear_seed_rows(conn: Connection) -> None:
@@ -36,10 +32,12 @@ def _clear_seed_rows(conn: Connection) -> None:
     conn.execute(text("DELETE FROM normalization_issue WHERE issue_type = 'seed_demo'"))
     conn.execute(text("DELETE FROM pipeline_run_summary WHERE job_name = 'seed_daily_refresh'"))
     conn.execute(text("DELETE FROM sync_state WHERE integration_code LIKE 'seed_%'"))
+    # Нельзя глотать ошибку в той же транзакции: в PostgreSQL после сбоя нужен ROLLBACK TO SAVEPOINT.
     try:
-        conn.execute(text("DELETE FROM mapping_profile_legacy WHERE name LIKE 'Seed %'"))
+        with conn.begin_nested():
+            conn.execute(text("DELETE FROM mapping_profile_legacy WHERE name LIKE 'Seed %'"))
     except Exception:
-        pass
+        pass  # таблица может отсутствовать в старых схемах
     conn.execute(text("DELETE FROM integration_config WHERE config_key LIKE 'seed.%'"))
     conn.execute(
         text("DELETE FROM raw_google_sheet_orders_staging WHERE ingest_batch_id = :bid"), {"bid": _BATCH}
@@ -135,13 +133,13 @@ def seed_roles_and_users(conn: Connection) -> None:
     for rid, rname in conn.execute(text("SELECT id, name FROM role")):
         id_by_name[str(rname)] = int(rid)
 
-    # Пароли для скриншотов ВКР (в тексте диплома указать смену в проде; хеш = SHA-256 UTF-8 → hex).
+    # Пароли для скриншотов ВКР (в дипломе указать смену в проде; хеш = bcrypt).
     users = [
-        ("seed_admin", "seed-admin@example.local", ("platform_admin",), _ph("AdminDemo2026")),
-        ("seed_integrator", "seed-integrator@example.local", ("data_integrator",), _ph("IntegratorDemo2026")),
-        ("seed_analyst", "seed-analyst@example.local", ("analyst",), _ph("AnalystDemo2026")),
-        ("seed_analyst2", "seed-analyst2@example.local", ("analyst",), _ph("AnalystDemo2026")),
-        ("seed_ops", "seed-ops@example.local", ("data_integrator", "analyst"), _ph("IntegratorDemo2026")),
+        ("seed_admin", "seed-admin@example.local", ("platform_admin",), hash_password("AdminDemo2026")),
+        ("seed_integrator", "seed-integrator@example.local", ("data_integrator",), hash_password("IntegratorDemo2026")),
+        ("seed_analyst", "seed-analyst@example.local", ("analyst",), hash_password("AnalystDemo2026")),
+        ("seed_analyst2", "seed-analyst2@example.local", ("analyst",), hash_password("AnalystDemo2026")),
+        ("seed_ops", "seed-ops@example.local", ("data_integrator", "analyst"), hash_password("IntegratorDemo2026")),
     ]
     for uname, email, rnames, pw_hash in users:
         res = conn.execute(
