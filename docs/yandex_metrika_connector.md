@@ -1,29 +1,41 @@
-# Коннектор «Яндекс Метрика»
+# Коннектор Яндекс Метрика
 
 ## Назначение
 
-Источник `yandex_metrika` в `datanorma/sources/yandex_metrika.py` реализует контракт `check` / `discover` / `read` для потоков:
+Источник `yandex_metrika` (`datanorma/sources/yandex_metrika.py`) реализует `check`, `discover`, `read`
+для потоков:
 
-- `summary` — агрегированные показатели по дням (демо: `data/samples/yandex_metrika_summary.json`);
-- `visits` — визиты;
-- `hits` — просмотры страниц;
-- `goals_reaches` — достижения целей.
+- `summary`
+- `visits`
+- `hits`
+- `goals_reaches`
 
-## Подключение
+## Режимы работы
 
-- **Без секретов:** при наличии всех четырёх sample-файлов в `data/samples/` коннектор проходит `check` и отдаёт данные из фикстур.
-- **С OAuth:** задайте переменные окружения `YANDEX_METRIKA_OAUTH_TOKEN` и `YANDEX_METRIKA_COUNTER_ID`. Метод `check` вызывает Management API (`GET /management/v1/counter/{id}`). Чтение в текущей версии по-прежнему ориентировано на sample-файлы (отчёты Statistics API можно добавить отдельно).
+- OAuth mode: используются `YANDEX_METRIKA_OAUTH_TOKEN` и `YANDEX_METRIKA_COUNTER_ID` для проверки счетчика.
+- Fixture mode: при отсутствии OAuth коннектор работает на sample JSON в `data/samples/`.
 
-## Каноническая модель
+## Слои данных
 
-Маппинг описан в `datanorma/schemas/source_mappings.yaml` (блок `marketing`) и в логической схеме `datanorma/schemas/canonical_marketing_events.yaml`. Программный сборщик строк: `datanorma.normalization.marketing_events.build_canonical_marketing_event_rows`.
+Для актуальной архитектуры поток должен проходить через слои:
 
-Таблица PostgreSQL: `canonical_marketing_events` (миграция `009_phase6_canonical_marketing_events`).
+1. `raw.yandex_metrika__<stream>`
+2. `normalized.yandex_metrika__<stream>`
+3. `semantic.*` через dbt-модели маркетингового домена.
 
-## UI
+Существующие legacy-таблицы и канонические сущности могут оставаться временно для обратной совместимости,
+но новые изменения ориентируются на `raw/normalized/semantic`.
 
-В демо-каталоге React (`client/src/lib/mock-data.ts`) коннектор отображается как «Яндекс Метрика» с потоками `summary`, `visits`, `hits`, `goals_reaches`.
+## dbt интеграция
 
-## История требований
+Текущие модели в репозитории:
 
-Изначально в продуктовых чеклистах фигурировал Unisender; актуальное требование для веб-аналитики — Яндекс Метрика с перечисленными потоками.
+- `dbt/models/marketing/yandex_metrika_visits.sql`
+- `dbt/models/marketing/yandex_metrika_goal_reaches.sql`
+
+Модели читают из `normalized`-источников и формируют аналитический слой.
+
+## Изменение требований
+
+Для веб-аналитики в актуальном каталоге используется Яндекс Метрика.
+Unisender в актуальных сценариях не является обязательным источником.
