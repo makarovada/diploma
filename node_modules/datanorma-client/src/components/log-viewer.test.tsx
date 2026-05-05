@@ -1,7 +1,11 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { LogViewer } from "@/components/log-viewer";
-import { runLogs } from "@/lib/mock-data";
+
+const runLogs = [
+  "[info] extract started",
+  "[info] normalize finished",
+];
 
 describe("LogViewer", () => {
   it("renders controls and log content", () => {

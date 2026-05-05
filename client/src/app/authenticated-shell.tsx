@@ -12,7 +12,6 @@ import { ConnectionEditPage } from "@/pages/connection-edit";
 import { ConnectionIssuesPage } from "@/pages/connection-issues";
 import { ConnectionLogsPage } from "@/pages/connection-logs";
 import { ConnectionMappingPage } from "@/pages/connection-mapping";
-import { ConnectionNormalizationPage } from "@/pages/connection-normalization";
 import { ConnectionRunsPage } from "@/pages/connection-runs";
 import { ConnectionSettingsPage } from "@/pages/connection-settings";
 import { ConnectionStreamsPage } from "@/pages/connection-streams";
@@ -31,7 +30,6 @@ import { HelpPage } from "@/pages/help";
 import { IssueDetailPage } from "@/pages/issue-detail";
 import { IssuesPage } from "@/pages/issues";
 import { NormalizationDictionariesPage } from "@/pages/normalization-dictionaries";
-import { NormalizationRulesPage } from "@/pages/normalization-rules";
 import { NormalizationPage } from "@/pages/normalization";
 import { NotFoundPage } from "@/pages/not-found";
 import { OnboardingPage } from "@/pages/onboarding";
@@ -58,7 +56,7 @@ function MainRoutes() {
         <Route path="/connections/:id/edit" component={ConnectionEditPage} />
         <Route path="/connections/:id/streams" component={ConnectionStreamsPage} />
         <Route path="/connections/:id/mapping" component={ConnectionMappingPage} />
-        <Route path="/connections/:id/normalization" component={ConnectionNormalizationPage} />
+        <Route path="/connections/:id/normalization" component={ConnectionMappingPage} />
         <Route path="/connections/:id/runs" component={ConnectionRunsPage} />
         <Route path="/connections/:id/logs" component={ConnectionLogsPage} />
         <Route path="/connections/:id/issues" component={ConnectionIssuesPage} />
@@ -84,7 +82,7 @@ function MainRoutes() {
         <Route path="/schedules" component={SchedulesPage} />
         <Route path="/queue" component={QueuePage} />
 
-        <Route path="/normalization/rules" component={NormalizationRulesPage} />
+        <Route path="/normalization/rules" component={NormalizationPage} />
         <Route path="/normalization/dictionaries" component={NormalizationDictionariesPage} />
         <Route path="/normalization" component={NormalizationPage} />
         <Route path="/semantic-layer" component={SemanticLayerPage} />

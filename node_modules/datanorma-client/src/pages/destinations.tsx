@@ -1,10 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
-import { destinations as demoDestinations } from "@/lib/mock-data";
-import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { fetchDestinationsCatalog, mapDestinationCatalogItem } from "@/lib/api-datanorma";
-import { withApiOrDemo } from "@/lib/demo-fallback";
 import { queryKeys } from "@/lib/query-keys";
 
 const statusRu: Record<string, string> = {
@@ -16,25 +13,21 @@ const statusRu: Record<string, string> = {
 export function DestinationsPage() {
   const query = useQuery({
     queryKey: queryKeys.destinations.list(),
-    queryFn: () =>
-      withApiOrDemo(async () => {
-        const { items } = await fetchDestinationsCatalog(undefined, "main");
-        return items.map(mapDestinationCatalogItem);
-      }, demoDestinations),
+    queryFn: async () => {
+      const { items } = await fetchDestinationsCatalog(undefined, "main");
+      return items.map(mapDestinationCatalogItem);
+    },
   });
 
   if (query.isPending) return <div data-testid="state-loading-destinations" className="p-4">Загрузка приёмников…</div>;
   if (query.isError) return <div data-testid="state-error-destinations" className="p-4">Ошибка загрузки приёмников.</div>;
 
-  const pack = query.data;
-  const list = pack?.value ?? [];
-  const isDemo = pack?.isDemoFallback ?? false;
+  const list = query.data ?? [];
 
   if (list.length === 0) {
     return (
       <div className="p-4">
         <PageHeader title="Приёмники" description="Системы и хранилища для нормализованных данных" breadcrumbs="Интеграции / Приёмники" actions={<LinkAsButton href="/destinations/new" data-testid="button-add-destination">Добавить приёмник</LinkAsButton>} />
-        {isDemo ? <DemoFallbackBanner /> : null}
         <div data-testid="state-empty-destinations" className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
           Нет записей в каталоге приёмников.
         </div>
@@ -45,7 +38,6 @@ export function DestinationsPage() {
   return (
     <div className="p-4">
       <PageHeader title="Приёмники" description="Системы и хранилища для нормализованных данных" breadcrumbs="Интеграции / Приёмники" actions={<LinkAsButton href="/destinations/new" data-testid="button-add-destination">Добавить приёмник</LinkAsButton>} />
-      {isDemo ? <DemoFallbackBanner /> : null}
       <div className="overflow-auto rounded-lg border" data-testid="table-destinations">
         <table className="w-full min-w-[880px] text-left text-sm" aria-label="Таблица приёмников">
           <thead className="bg-muted">

@@ -1,9 +1,27 @@
 import { PageHeader } from "@/components/page-header";
-import { dictionarySummary } from "@/lib/mock-data";
+import { useQuery } from "@tanstack/react-query";
 import { LinkAsButton } from "@/components/link-as-button";
 import { Button } from "@/components/ui/button";
 
 export function NormalizationDictionariesPage() {
+  const query = useQuery({
+    queryKey: ["normalization", "dictionaries"],
+    queryFn: async () => {
+      const [currency, unit, status] = await Promise.all([
+        fetch(`/api/v1/dictionaries/currency`).then((r) => r.json()),
+        fetch(`/api/v1/dictionaries/unit`).then((r) => r.json()),
+        fetch(`/api/v1/dictionaries/status`).then((r) => r.json()),
+      ]);
+      return [
+        { id: "dict-currency", name: "Валюты", rows: Array.isArray(currency.items) ? currency.items.length : 0, updatedAt: "—" },
+        { id: "dict-unit", name: "Единицы измерения", rows: Array.isArray(unit.items) ? unit.items.length : 0, updatedAt: "—" },
+        { id: "dict-status", name: "Статусы", rows: Array.isArray(status.items) ? status.items.length : 0, updatedAt: "—" },
+      ];
+    },
+  });
+  if (query.isPending) return <div className="p-4 text-muted-foreground">Загрузка справочников…</div>;
+  if (query.isError || !query.data) return <div className="p-4">Не удалось загрузить справочники.</div>;
+  const dictionarySummary = query.data;
   return (
     <div className="space-y-4 p-4">
       <PageHeader

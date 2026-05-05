@@ -53,6 +53,13 @@ class Settings(BaseSettings):
     ozon_api_key: str = ""
     ozon_fetch_limit: int = 100
 
+    # --- новые коннекторы (offline demo через fixtures) ---
+    wildberries_api_token: str = Field(default="", validation_alias="DATANORMA_WB_API_TOKEN")
+    bitrix24_webhook_url: str = Field(default="", validation_alias="DATANORMA_BITRIX24_WEBHOOK_URL")
+    amocrm_base_url: str = Field(default="", validation_alias="DATANORMA_AMOCRM_BASE_URL")
+    amocrm_token: str = Field(default="", validation_alias="DATANORMA_AMOCRM_TOKEN")
+    moysklad_token: str = Field(default="", validation_alias="DATANORMA_MOYSKLAD_TOKEN")
+
     gspread_service_account_file: str = ""
     gspread_spreadsheet_id: str = ""
     gspread_worksheet: str = "0"

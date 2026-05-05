@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils";
 import { fetchDbtModels, fetchDbtModelPreview } from "@/lib/api-datanorma";
 import { ApiError } from "@/lib/api-client";
 import type { DbtModelItemDto } from "@/lib/api-types";
-import { dbtModels as mockDbtModels } from "@/lib/mock-data";
 
 const DOMAIN_ORDER = ["marketing", "ecommerce", "crm", "operations", "other"];
 
@@ -18,24 +17,6 @@ const DOMAIN_LABELS: Record<string, string> = {
   operations: "Operations",
   other: "Прочее",
 };
-
-function mockAsDto(): DbtModelItemDto[] {
-  return mockDbtModels.map((m) => ({
-    name: m.name,
-    schema: m.schema,
-    materialized_as: m.materializedAs,
-    sources: m.sources,
-    domain: m.name.includes("yandex") ? "marketing" : "ecommerce",
-    path: "",
-    description: m.description ?? "",
-    columns: m.columns.map((c) => ({
-      name: c.name,
-      dataType: c.dataType,
-      description: c.description,
-      isPrimaryKey: c.isPrimaryKey,
-    })),
-  }));
-}
 
 function groupByDomain(items: DbtModelItemDto[]) {
   const map = new Map<string, DbtModelItemDto[]>();
@@ -62,12 +43,8 @@ export function SemanticLayerPage() {
   const { data, isLoading } = useQuery({
     queryKey: ["dbt-models"],
     queryFn: async () => {
-      try {
-        const r = await fetchDbtModels();
-        return { items: r.items, source: r.source ?? "unknown", fromApi: true as const };
-      } catch {
-        return { items: mockAsDto(), source: "mock" as const, fromApi: false as const };
-      }
+      const r = await fetchDbtModels();
+      return { items: r.items, source: r.source ?? "unknown", fromApi: true as const };
     },
   });
 
@@ -122,11 +99,6 @@ export function SemanticLayerPage() {
         breadcrumbs="Данные / Семантический слой"
       />
 
-      {!isLoading && data?.fromApi === false && (
-        <p className="mb-2 text-sm text-amber-700 dark:text-amber-500">
-          Каталог с API недоступен — показаны демо-модели из моков.
-        </p>
-      )}
       {!isLoading && data?.fromApi === true && (
         <p className="mb-2 text-xs text-muted-foreground">
           Источник каталога: <span className="font-mono">{data.source}</span>

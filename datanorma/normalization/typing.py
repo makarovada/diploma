@@ -1,29 +1,16 @@
-"""Typing & deduping for canonical rows + typed table upsert."""
+"""Утилиты типизации значений и универсального UPSERT для normalized-слоя."""
 
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from pathlib import Path
 from typing import Any
 
-import yaml
-from sqlalchemy import Column, Date, DateTime, MetaData, Numeric, PrimaryKeyConstraint, String, Table, Text, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB, insert as pg_insert
+from sqlalchemy import Table, func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 
-from datanorma.config import get_settings
-
-_META = MetaData()
-
-
-def load_canonical_schema(path: Path | None = None) -> dict[str, Any]:
-    schema_path = path or (Path(__file__).resolve().parent.parent / "schemas" / "canonical_sales.yaml")
-    with schema_path.open(encoding="utf-8") as f:
-        payload = yaml.safe_load(f) or {}
-    if not isinstance(payload.get("fields"), dict):
-        raise ValueError(f"Invalid canonical schema: {schema_path}")
-    return payload
+from datanorma.normalization.rules import ColumnRule, StreamRules
 
 
 def _to_datetime(value: Any) -> datetime | None:
@@ -54,128 +41,259 @@ def _to_date(value: Any) -> date | None:
     return date.fromisoformat(s[:10])
 
 
-def _cast_value(field: str, spec: dict[str, Any], raw: Any) -> tuple[Any, dict[str, Any] | None]:
+def cast_string(raw: Any, *, trim: bool = True, lowercase: bool = False, uppercase: bool = False) -> tuple[str | None, str | None]:
+    """Приведение значения к строке."""
+    if raw is None:
+        return None, None
+    out = str(raw)
+    if trim:
+        out = out.strip()
+    if out == "":
+        return None, None
+    if lowercase:
+        out = out.lower()
+    if uppercase:
+        out = out.upper()
+    return out, None
+
+
+def cast_integer(raw: Any) -> tuple[int | None, str | None]:
+    """Приведение значения к целому числу."""
     if raw is None or raw == "":
         return None, None
-
-    type_name = str(spec.get("type") or "string")
-    fmt = str(spec.get("format") or "")
     try:
-        if field == "event_datetime" or (type_name == "string" and fmt in ("iso8601", "datetime")):
-            dt = _to_datetime(raw)
-            return dt, {"field": field, "action": "datetime_cast", "from": raw, "to": dt.isoformat() if dt else None}
-        if field == "cbr_rate_date" or (type_name == "string" and fmt == "date"):
-            d = _to_date(raw)
-            return d, {"field": field, "action": "date_cast", "from": raw, "to": d.isoformat() if d else None}
-        if type_name == "number":
-            if isinstance(raw, (int, float, Decimal)):
-                return Decimal(str(raw)), None
-            out = Decimal(str(raw).strip().replace(" ", "").replace(",", "."))
-            return out, {"field": field, "action": "number_cast", "from": raw, "to": str(out)}
-        if type_name == "integer":
-            out = int(str(raw).strip())
-            return out, {"field": field, "action": "int_cast", "from": raw, "to": out}
-        if type_name == "boolean":
-            s = str(raw).strip().lower()
-            if s in ("1", "true", "yes", "y", "да"):
-                return True, {"field": field, "action": "bool_cast", "from": raw, "to": True}
-            if s in ("0", "false", "no", "n", "нет"):
-                return False, {"field": field, "action": "bool_cast", "from": raw, "to": False}
-            raise ValueError(f"unsupported bool literal: {raw!r}")
-
-        out = str(raw).strip()
-        return out, ({"field": field, "action": "strip", "from": raw, "to": out} if out != raw else None)
+        return int(str(raw).strip()), None
     except (ValueError, TypeError, InvalidOperation) as exc:
-        return None, {"field": field, "action": "cast_error", "from": raw, "to": None, "error": str(exc)}
+        return None, str(exc)
 
 
-def cast_rows_to_typed(rows: list[dict[str, Any]], canonical_schema: dict[str, Any]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    fields: dict[str, dict[str, Any]] = canonical_schema.get("fields") or {}
-    dedup_keys: set[tuple[str, str]] = set()
-    typed_rows: list[dict[str, Any]] = []
-    stats = {
-        "rows_in": len(rows),
-        "rows_out": 0,
-        "duplicates_dropped": 0,
-        "changes_total": 0,
-        "cast_errors": 0,
-    }
+def cast_number(raw: Any, *, decimal_separator: str | None = None, thousands_separator: str | None = None, scale_factor: float | None = None) -> tuple[Decimal | None, str | None]:
+    """Приведение значения к Decimal с учетом разделителей."""
+    if raw is None or raw == "":
+        return None, None
+    try:
+        if isinstance(raw, (int, float, Decimal)):
+            out = Decimal(str(raw))
+        else:
+            s = str(raw).strip()
+            if thousands_separator:
+                s = s.replace(thousands_separator, "")
+            else:
+                s = s.replace(" ", "")
+            if decimal_separator and decimal_separator != ".":
+                s = s.replace(decimal_separator, ".")
+            else:
+                s = s.replace(",", ".")
+            out = Decimal(s)
+        if scale_factor is not None:
+            out *= Decimal(str(scale_factor))
+        return out, None
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        return None, str(exc)
 
-    for row in rows:
-        source_system = str(row.get("source_system") or "").strip()
-        source_record_id = str(row.get("source_record_id") or "").strip()
-        if source_system and source_record_id:
-            key = (source_system, source_record_id)
-            if key in dedup_keys:
-                stats["duplicates_dropped"] += 1
+
+def cast_boolean(raw: Any) -> tuple[bool | None, str | None]:
+    """Приведение значения к bool."""
+    if raw is None or raw == "":
+        return None, None
+    s = str(raw).strip().lower()
+    if s in ("1", "true", "yes", "y", "да"):
+        return True, None
+    if s in ("0", "false", "no", "n", "нет"):
+        return False, None
+    return None, f"unsupported bool literal: {raw!r}"
+
+
+def cast_date(raw: Any, *, date_formats: list[str] | None = None) -> tuple[date | None, str | None]:
+    """Приведение значения к date."""
+    if raw is None or raw == "":
+        return None, None
+    if isinstance(raw, date) and not isinstance(raw, datetime):
+        return raw, None
+    s = str(raw).strip()
+    if not s:
+        return None, None
+    if date_formats:
+        for fmt in date_formats:
+            try:
+                return datetime.strptime(s, fmt).date(), None
+            except ValueError:
                 continue
-            dedup_keys.add(key)
-
-        changes: list[dict[str, Any]] = []
-        typed: dict[str, Any] = {}
-        for field_name, spec in fields.items():
-            casted, change = _cast_value(field_name, spec, row.get(field_name))
-            typed[field_name] = casted
-            if change is not None:
-                changes.append(change)
-                stats["changes_total"] += 1
-                if change.get("action") == "cast_error":
-                    stats["cast_errors"] += 1
-
-        typed["_ingest_extracted_at"] = _to_datetime(row.get("_ingest_extracted_at"))
-        typed["_ingest_meta"] = {"changes": changes}
-        typed_rows.append(typed)
-
-    stats["rows_out"] = len(typed_rows)
-    return typed_rows, stats
+    try:
+        return date.fromisoformat(s[:10]), None
+    except ValueError as exc:
+        return None, str(exc)
 
 
-def typed_canonical_table(name: str | None = None) -> Table:
-    tname = name or get_settings().datanorma_typed_table.strip() or "typed_canonical_sales"
-    if tname in _META.tables:
-        return _META.tables[tname]
-    return Table(
-        tname,
-        _META,
-        Column("source_system", String(64), nullable=False),
-        Column("source_record_id", String(512), nullable=False),
-        Column("event_datetime", DateTime(timezone=True)),
-        Column("amount", Numeric(18, 4)),
-        Column("amount_rub", Numeric(18, 4)),
-        Column("currency_code", String(16)),
-        Column("counterparty_name", Text),
-        Column("channel", String(128)),
-        Column("line_description", Text),
-        Column("status", String(128)),
-        Column("line_unit_normalized", String(64)),
-        Column("person_full_name", Text),
-        Column("person_family_name", String(128)),
-        Column("person_given_name", String(128)),
-        Column("person_patronymic", String(128)),
-        Column("contact_phone_e164", String(32)),
-        Column("contact_email", String(256)),
-        Column("country_code", String(2)),
-        Column("order_status_code", String(64)),
-        Column("payment_status_code", String(64)),
-        Column("shipment_status_code", String(64)),
-        Column("cbr_rate_date", Date),
-        Column("_ingest_extracted_at", DateTime(timezone=True), nullable=True),
-        Column("_ingest_meta", JSONB, nullable=False),
-        Column("loaded_at", DateTime(timezone=True), nullable=False),
-        PrimaryKeyConstraint("source_system", "source_record_id"),
+def cast_datetime(raw: Any, *, date_formats: list[str] | None = None) -> tuple[datetime | None, str | None]:
+    """Приведение значения к datetime (timezone-aware)."""
+    if raw is None or raw == "":
+        return None, None
+    if isinstance(raw, datetime):
+        out = raw
+    else:
+        s = str(raw).strip()
+        if not s:
+            return None, None
+        if date_formats:
+            for fmt in date_formats:
+                try:
+                    out = datetime.strptime(s, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                out = _to_datetime(s)
+        else:
+            out = _to_datetime(s)
+    if out is None:
+        return None, "datetime parse failed"
+    if out.tzinfo is None:
+        out = out.replace(tzinfo=timezone.utc)
+    return out, None
+
+
+def cast_currency_amount(raw: Any, *, decimal_separator: str | None = None, thousands_separator: str | None = None, scale_factor: float | None = None) -> tuple[Decimal | None, str | None]:
+    """Приведение суммы к Decimal."""
+    return cast_number(
+        raw,
+        decimal_separator=decimal_separator,
+        thousands_separator=thousands_separator,
+        scale_factor=scale_factor,
     )
 
 
-def upsert_typed_rows(engine: Engine, rows: list[dict[str, Any]], *, table_name: str | None = None, chunk_size: int = 500) -> dict[str, Any]:
-    table = typed_canonical_table(table_name)
-    loaded_at = datetime.now(timezone.utc)
-    payloads = [{**r, "loaded_at": loaded_at} for r in rows]
-    key_cols = ("source_system", "source_record_id")
+def cast_phone(raw: Any) -> tuple[str | None, str | None]:
+    """Нормализация телефона в простом E.164-подобном формате."""
+    if raw is None or raw == "":
+        return None, None
+    s = "".join(ch for ch in str(raw) if ch.isdigit() or ch == "+")
+    if not s:
+        return None, "empty phone"
+    if s.startswith("8") and len(s) == 11:
+        s = "+7" + s[1:]
+    if not s.startswith("+"):
+        s = "+" + s
+    digits = "".join(ch for ch in s if ch.isdigit())
+    if len(digits) < 10:
+        return None, "phone too short"
+    return s, None
+
+
+def cast_email(raw: Any) -> tuple[str | None, str | None]:
+    """Проверка и нормализация email."""
+    s, err = cast_string(raw, trim=True, lowercase=True)
+    if err or s is None:
+        return s, err
+    if "@" not in s or s.startswith("@") or s.endswith("@"):
+        return None, "invalid email"
+    return s, None
+
+
+def cast_inn(raw: Any) -> tuple[str | None, str | None]:
+    """Приведение ИНН к строке с валидацией длины."""
+    if raw is None or raw == "":
+        return None, None
+    s = "".join(ch for ch in str(raw) if ch.isdigit())
+    if len(s) not in (10, 12):
+        return None, "invalid INN length"
+    return s, None
+
+
+def cast_enum(raw: Any, *, enum_map: dict[str, str] | None = None, enum_default: str | None = None) -> tuple[str | None, str | None]:
+    """Нормализация перечисления через словарь соответствий."""
+    if raw is None or raw == "":
+        return enum_default, None
+    key = str(raw).strip()
+    enum_map = enum_map or {}
+    if key in enum_map:
+        return enum_map[key], None
+    if enum_default is not None:
+        return enum_default, None
+    return None, f"unknown enum value: {key}"
+
+
+def cast_value(rule: ColumnRule, raw: Any) -> tuple[Any, dict[str, Any] | None]:
+    """Каст одного значения в соответствии с ColumnRule."""
+    if raw is None or raw == "":
+        if rule.required:
+            return None, {"field": rule.target_field, "error_code": "required_missing", "raw_value": raw}
+        return None, None
+
+    if rule.type == "string":
+        value, err = cast_string(raw, trim=rule.trim, lowercase=rule.lowercase, uppercase=rule.uppercase)
+    elif rule.type == "integer":
+        value, err = cast_integer(raw)
+    elif rule.type == "number":
+        value, err = cast_number(raw, decimal_separator=rule.decimal_separator, thousands_separator=rule.thousands_separator, scale_factor=rule.scale_factor)
+    elif rule.type == "boolean":
+        value, err = cast_boolean(raw)
+    elif rule.type == "date":
+        value, err = cast_date(raw, date_formats=rule.date_formats)
+    elif rule.type == "datetime":
+        value, err = cast_datetime(raw, date_formats=rule.date_formats)
+    elif rule.type == "currency_amount":
+        value, err = cast_currency_amount(raw, decimal_separator=rule.decimal_separator, thousands_separator=rule.thousands_separator, scale_factor=rule.scale_factor)
+    elif rule.type == "currency_code":
+        value, err = cast_string(raw, trim=True, uppercase=True)
+    elif rule.type == "phone":
+        value, err = cast_phone(raw)
+    elif rule.type == "email":
+        value, err = cast_email(raw)
+    elif rule.type == "inn":
+        value, err = cast_inn(raw)
+    elif rule.type in ("kpp", "ogrn"):
+        value, err = cast_string(raw, trim=True)
+    elif rule.type == "enum":
+        value, err = cast_enum(raw, enum_map=rule.enum_map, enum_default=rule.enum_default)
+    elif rule.type == "json":
+        value, err = raw, None
+    else:
+        value, err = raw, f"unsupported type: {rule.type}"
+
+    if err:
+        if rule.on_error == "keep_raw":
+            return raw, None
+        if rule.on_error == "raise":
+            raise ValueError(err)
+        return None, {"field": rule.target_field, "error_code": "cast_error", "error_text": err, "raw_value": raw}
+    return value, None
+
+
+def cast_row(rules: StreamRules, raw_row: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Каст одной строки по StreamRules."""
+    out: dict[str, Any] = {}
+    issues: list[dict[str, Any]] = []
+    for col in rules.columns:
+        raw_value = raw_row.get(col.source_field)
+        value, issue = cast_value(col, raw_value)
+        out[col.target_field] = value
+        if issue is not None:
+            issues.append(issue)
+    return out, issues
+
+
+def upsert_rows(
+    engine: Engine,
+    table: Table,
+    rows: list[dict[str, Any]],
+    *,
+    primary_key: list[str],
+    chunk_size: int = 500,
+) -> dict[str, Any]:
+    """Универсальный upsert для динамических normalized-таблиц."""
+    if not rows:
+        return {"table": table.name, "rows_upserted": 0}
+    key_cols = tuple(primary_key or [])
+    if not key_cols:
+        with engine.begin() as conn:
+            conn.execute(table.insert(), rows)
+        return {"table": table.name, "rows_upserted": len(rows), "mode": "insert_only"}
     update_cols = [c.name for c in table.columns if c.name not in key_cols]
     with engine.begin() as conn:
         table.metadata.create_all(conn, tables=[table], checkfirst=True)
-        for i in range(0, len(payloads), chunk_size):
-            chunk = payloads[i : i + chunk_size]
+        for i in range(0, len(rows), chunk_size):
+            chunk = rows[i : i + chunk_size]
             if not chunk:
                 continue
             stmt = pg_insert(table).values(chunk)
@@ -183,17 +301,12 @@ def upsert_typed_rows(engine: Engine, rows: list[dict[str, Any]], *, table_name:
             stmt = stmt.on_conflict_do_update(
                 index_elements=list(key_cols),
                 set_={col: getattr(excluded, col) for col in update_cols},
-                where=or_(
-                    table.c._ingest_extracted_at.is_(None),
-                    excluded._ingest_extracted_at.is_(None),
-                    excluded._ingest_extracted_at >= table.c._ingest_extracted_at,
-                ),
             )
             conn.execute(stmt)
-    return {"table": table.name, "rows_upserted": len(payloads)}
+    return {"table": table.name, "rows_upserted": len(rows), "mode": "upsert"}
 
 
-def count_typed_rows(engine: Engine, table_name: str | None = None) -> int:
-    table = typed_canonical_table(table_name)
+def count_rows(engine: Engine, table: Table) -> int:
+    """Подсчёт количества строк в таблице."""
     with engine.connect() as conn:
         return int(conn.execute(select(func.count()).select_from(table)).scalar_one())

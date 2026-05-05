@@ -5,12 +5,26 @@ from __future__ import annotations
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource
 from datanorma.sources.builder import RestBuilderSource, load_rest_connector_yaml
+from datanorma.sources.amocrm import AmoCRMSource
+from datanorma.sources.bitrix24 import Bitrix24Source
+from datanorma.sources.moysklad import MoysKladSource
 from datanorma.sources.onec import OneCSource
 from datanorma.sources.ozon import OzonSource
 from datanorma.sources.sheets import GoogleSheetsSource
+from datanorma.sources.wildberries import WildberriesSource
 from datanorma.sources.yandex_metrika import YandexMetrikaSource
 
-SOURCE_KINDS: tuple[str, ...] = ("ozon", "1c", "google_sheet", "rest_builder", "yandex_metrika")
+SOURCE_KINDS: tuple[str, ...] = (
+    "ozon",
+    "1c",
+    "google_sheet",
+    "wildberries",
+    "bitrix24",
+    "amocrm",
+    "moysklad",
+    "rest_builder",
+    "yandex_metrika",
+)
 
 
 def create_source(
@@ -24,6 +38,22 @@ def create_source(
         if paths is None:
             raise ValueError("Для ozon нужен paths: DataPathsResource")
         return OzonSource(paths)
+    if k in ("wildberries", "wb"):
+        if paths is None:
+            raise ValueError("Для wildberries нужен paths: DataPathsResource")
+        return WildberriesSource(paths)
+    if k in ("bitrix24", "bx24"):
+        if paths is None:
+            raise ValueError("Для bitrix24 нужен paths: DataPathsResource")
+        return Bitrix24Source(paths)
+    if k in ("amocrm",):
+        if paths is None:
+            raise ValueError("Для amocrm нужен paths: DataPathsResource")
+        return AmoCRMSource(paths)
+    if k in ("moysklad",):
+        if paths is None:
+            raise ValueError("Для moysklad нужен paths: DataPathsResource")
+        return MoysKladSource(paths)
     if k in ("1c", "onec", "1с"):
         if paths is None:
             raise ValueError("Для 1c нужен paths: DataPathsResource")

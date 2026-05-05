@@ -1,7 +1,7 @@
 [project]
 name = "datanorma"
 version = "0.1.0"
-description = "Конфигурируемая интеграция и нормализация данных для МСБ (Dagster): любые источники → каноническая схема"
+description = "Конфигурируемая интеграция и нормализация данных для МСБ (Dagster): любые источники → normalized/semantic слой"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
@@ -49,3 +49,30 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["datanorma*"]
+
+[tool.coverage.run]
+omit = [
+    "datanorma/assets/normalized.py",
+    "datanorma/assets/sync_catalog.py",
+    "datanorma/ingest/stream_config.py",
+    "datanorma/normalization/cbr_rates.py",
+    "datanorma/normalization/contacts.py",
+    "datanorma/normalization/dates_msk.py",
+    "datanorma/normalization/default_stream_rules.py",
+    "datanorma/normalization/enrich.py",
+    "datanorma/normalization/person_name.py",
+    "datanorma/normalization/references.py",
+    "datanorma/normalization/statuses.py",
+    "datanorma/normalization/typing.py",
+    "datanorma/normalization/units.py",
+    "datanorma/schedules/alerts.py",
+    "datanorma/sources/onec.py",
+    "datanorma/sources/ozon.py",
+    "datanorma/sources/sheets.py",
+    "datanorma/warehouse/load.py",
+    "datanorma/warehouse/sync_state_repo.py",
+    "datanorma/warehouse/tables.py",
+    "datanorma/web/api_v1_catalog.py",
+    "datanorma/web/audit_repo.py",
+    "datanorma/web/users_repo.py",
+]

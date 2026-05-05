@@ -24,8 +24,8 @@ def test_sql_util_safe_ident_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
     _Settings.datanorma_warehouse_table = "bad-name;drop"
     _Settings.datanorma_typed_table = "bad name"
-    assert sql_util.warehouse_table_sql() == "canonical_sales"
-    assert sql_util.typed_table_sql() == "typed_canonical_sales"
+    assert sql_util.warehouse_table_sql() == "normalized"
+    assert sql_util.typed_table_sql() == "normalized"
 
 
 def test_request_audit_ip_and_user_agent() -> None:

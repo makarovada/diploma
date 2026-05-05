@@ -14,6 +14,7 @@ from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
 from datanorma.sources.schema_inference import records_to_json_schema
+from datanorma.normalization.default_stream_rules import default_stream_rules_from_json_schema
 
 _log = logging.getLogger(__name__)
 
@@ -141,3 +142,14 @@ class YandexMetrikaSource(BaseSource):
             sync_mode=str(sync_mode),
         )
         yield from filtered
+
+    def default_stream_rules(self, stream_name: str, json_schema: dict) -> "StreamRules":
+        cursor_fields = STREAM_CURSOR_FIELDS.get(stream_name) or []
+        cursor_field = cursor_fields[0] if cursor_fields else None
+        return default_stream_rules_from_json_schema(
+            stream_name=stream_name,
+            json_schema=json_schema,
+            cursor_field=cursor_field,
+            primary_key=cursor_fields or None,
+            sync_mode="incremental",
+        )

@@ -24,15 +24,17 @@
 2. Реализуйте контракт `check()/discover()/read()`.
 3. Зарегистрируйте источник в factory/registry (`datanorma/sources/registry.py`).
 
-## 2. Опишите stream-конфиг и маппинг
+## 2. Опишите stream-конфиг и правила нормализации
 
-Обновите `datanorma/schemas/source_mappings.yaml`:
-- `stream`
-- `handler`
+Используйте `default_stream_rules()` в source-классе и/или сохранение правил через API:
+- `PUT /api/v1/connections/{connection_id}/streams/{stream_name}/rules`
+- `POST /api/v1/connections/preview-rules`
+
+Минимальный набор на stream:
 - `sync_mode`
 - `cursor_field` (для incremental)
-- `fields` (соответствие полей источника структурной нормализации)
-- при необходимости `options` (например, fuzzy-порог)
+- `primary_key`
+- `columns[]` (`source_field`, `target_field`, `type`, `required`, `nullable`)
 
 Важно: в актуальном контуре маппинг должен обеспечивать корректный путь
 `raw.* -> normalized.* -> semantic.*` и не обходить слои напрямую.

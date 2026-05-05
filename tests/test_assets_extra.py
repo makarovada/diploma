@@ -14,16 +14,15 @@ def test_sync_catalog_builds_streams(monkeypatch: pytest.MonkeyPatch) -> None:
         def get_engine(self):
             return object()
 
-    monkeypatch.setattr(sync_catalog, "load_source_mappings", lambda: {"version": 2})
     monkeypatch.setattr(
         sync_catalog,
         "parse_all_stream_configs",
-        lambda _m: {"ozon": {"stream": "orders", "sync_mode": "incremental"}},
+        lambda *_: {"ozon": {"stream": "orders", "sync_mode": "incremental"}},
     )
     monkeypatch.setattr(sync_catalog, "fetch_sync_state_map", lambda _e: {("ozon", "orders"): {"cursor": "10"}})
     monkeypatch.setattr(sync_catalog, "extract_stream_cursor", lambda _r: "10")
     out = sync_catalog.sync_catalog(_Pg())
-    assert out["mappings_version"] == 2
+    assert out["mappings_version"] == "rules_v1"
     assert out["streams"]["ozon"]["resume_from_state"] is True
 
 

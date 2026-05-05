@@ -27,7 +27,7 @@ export function SidebarContent({
     <>
       <div className="mb-6">
         <p className="text-lg font-semibold">DataNorma</p>
-        <p className="text-xs text-muted-foreground">MVP</p>
+        <p className="text-xs text-muted-foreground">Платформа интеграций</p>
         <label className="mt-3 block text-[11px] font-semibold uppercase tracking-wide text-muted-foreground" htmlFor="workspace-select">
           Рабочее пространство
         </label>

@@ -1,12 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
-import { destinations as demoDestinations } from "@/lib/mock-data";
-import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
 import { fetchDestinationsCatalog, mapDestinationCatalogItem } from "@/lib/api-datanorma";
-import { withApiOrDemo } from "@/lib/demo-fallback";
 import { queryKeys } from "@/lib/query-keys";
 import type { Destination } from "@/lib/types";
 
@@ -14,8 +11,6 @@ async function loadDestinationById(id: string): Promise<Destination> {
   const { items } = await fetchDestinationsCatalog(undefined, "main");
   const row = items.find((x) => x.id === id);
   if (row) return mapDestinationCatalogItem(row);
-  const d = demoDestinations.find((x) => x.id === id);
-  if (d) return d;
   throw new Error("not_found");
 }
 
@@ -25,11 +20,7 @@ export function DestinationDetailPage() {
 
   const query = useQuery({
     queryKey: queryKeys.destinations.detail(destinationId),
-    queryFn: () =>
-      withApiOrDemo(
-        async () => loadDestinationById(destinationId),
-        demoDestinations.find((d) => d.id === destinationId) ?? demoDestinations[0],
-      ),
+    queryFn: () => loadDestinationById(destinationId),
     enabled: Boolean(destinationId),
   });
 
@@ -56,8 +47,7 @@ export function DestinationDetailPage() {
     );
   }
 
-  const dest = query.data?.value;
-  const isDemo = query.data?.isDemoFallback ?? false;
+  const dest = query.data;
   if (!dest) {
     return (
       <div className="p-4" data-testid="state-not-found-destination">
@@ -71,7 +61,6 @@ export function DestinationDetailPage() {
 
   return (
     <div className="space-y-4 p-4">
-      {isDemo ? <DemoFallbackBanner /> : null}
       <PageHeader
         title={dest.name}
         description={`${dest.type}${dest.connectorCode ? ` · ${dest.connectorCode}` : ""} · ${dest.schemaOrDb}`}

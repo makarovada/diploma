@@ -23,37 +23,25 @@ function streamIncrementalOk(s: WizardFormState): boolean {
 export function stepBlocksNext(step: number, s: WizardFormState): boolean {
   switch (step) {
     case 0:
-      return !s.connectionName.trim();
-    case 1:
-      return s.sourceId == null;
-    case 2:
       return (
+        !s.connectionName.trim() ||
+        s.sourceId == null ||
         Boolean(credentialsJsonError(s.credentialsConfigText)) ||
-        s.credentialsSavedText !== s.credentialsConfigText
+        s.credentialsSavedText !== s.credentialsConfigText ||
+        !s.sourceCheck?.ok
       );
-    case 3:
-      return !s.sourceCheck?.ok;
-    case 4:
-      return (
-        !s.discovery?.streams?.length ||
-        s.enabledStreamNames.length === 0 ||
-        !streamIncrementalOk(s)
-      );
-    case 5:
-      return s.destinationId == null;
-    case 6:
-      return !s.destinationCheck?.ok;
-    case 7: {
+    case 1: {
+      if (!s.discovery?.streams?.length) return true;
+      if (s.enabledStreamNames.length === 0) return true;
+      if (!streamIncrementalOk(s)) return true;
+
+      if (s.mappingRows.length === 0) return true;
       const missing = s.mappingRows.filter((r) => r.required && !r.targetField.trim());
       return missing.length > 0;
     }
-    case 8:
-      return false;
-    case 9:
-      return false;
-    case 10:
-      return s.preflightOk !== true;
-    case 11:
+    case 2:
+      return s.destinationId == null || !s.destinationCheck?.ok;
+    case 3:
       return false;
     default:
       return true;

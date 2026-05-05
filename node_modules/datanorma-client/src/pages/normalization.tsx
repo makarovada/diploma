@@ -1,10 +1,18 @@
 import { useMemo, useState } from "react";
-import { normalizationRules } from "@/lib/mock-data";
 import { NormalizationRuleCard } from "@/components/normalization-rule-card";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LinkAsButton } from "@/components/link-as-button";
+import type { NormalizationRule } from "@/lib/types";
+
+const normalizationRules: NormalizationRule[] = [
+  { id: "rule-date", title: "Даты и время", enabled: true, fixedCount: 0, issuesCount: 0, description: "Разбор дат и времени до типизированного формата." },
+  { id: "rule-phone", title: "Телефоны", enabled: true, fixedCount: 0, issuesCount: 0, description: "Приведение к E.164, где это возможно." },
+  { id: "rule-email", title: "Email", enabled: true, fixedCount: 0, issuesCount: 0, description: "trim/lowercase и базовая валидация email." },
+  { id: "rule-inn", title: "ИНН / КПП", enabled: true, fixedCount: 0, issuesCount: 0, description: "Нормализация ИНН по длине и формату." },
+  { id: "rule-currency", title: "Валюты и десятичные", enabled: true, fixedCount: 0, issuesCount: 0, description: "Приведение чисел/валют к стабильному виду." },
+];
 
 const STRUCTURAL_BEFORE_AFTER: { rule: string; before: string; after: string }[] = [
   { rule: "Даты", before: "03.05.2026", after: "2026-05-03 (календарная дата, UTC/таймзона на этапе типизации)" },

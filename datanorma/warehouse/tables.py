@@ -1,47 +1,103 @@
-"""Определение витрины в PostgreSQL."""
+"""Определение таблиц normalized-слоя в PostgreSQL."""
 
 from __future__ import annotations
 
-from datanorma.config import get_settings
+import re
 
-from sqlalchemy import Column, Date, DateTime, MetaData, Numeric, PrimaryKeyConstraint, String, Table, Text
+from sqlalchemy import BIGINT, Column, Date, DateTime, MetaData, Numeric, PrimaryKeyConstraint, String, Table, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
+
+from datanorma.normalization.rules import StreamRules
 
 metadata = MetaData()
 
 
-def canonical_sales_table(name: str | None = None) -> Table:
-    tname = name or get_settings().datanorma_warehouse_table.strip() or "canonical_sales"
-    key = tname
+def _safe_ident(name: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_]+", "_", name.strip().lower())
+    cleaned = cleaned.strip("_")
+    return cleaned or "unknown"
+
+
+def ensure_normalized_table(
+    *,
+    connector_code: str,
+    stream_rules: StreamRules,
+    schema: str = "normalized",
+    keep_raw_payload: bool = True,
+) -> Table:
+    """Создаёт/возвращает таблицу normalized.<connector>__<stream>."""
+    table_name = f"{_safe_ident(connector_code)}__{_safe_ident(stream_rules.stream_name)}"
+    key = f"{schema}.{table_name}"
     if key in metadata.tables:
         return metadata.tables[key]
+    columns: list[Column] = []
+    for col in stream_rules.columns:
+        if col.type == "string":
+            dtype = Text
+        elif col.type == "integer":
+            dtype = BIGINT
+        elif col.type in ("number", "currency_amount"):
+            dtype = Numeric(38, 9)
+        elif col.type == "currency_code":
+            dtype = String(8)
+        elif col.type == "boolean":
+            from sqlalchemy import Boolean
+
+            dtype = Boolean
+        elif col.type == "date":
+            dtype = Date
+        elif col.type == "datetime":
+            dtype = DateTime(timezone=True)
+        elif col.type == "phone":
+            dtype = String(32)
+        elif col.type == "email":
+            dtype = String(320)
+        elif col.type == "inn":
+            dtype = String(12)
+        elif col.type == "kpp":
+            dtype = String(9)
+        elif col.type == "ogrn":
+            dtype = String(15)
+        elif col.type == "enum":
+            dtype = String(128)
+        elif col.type == "json":
+            dtype = JSONB
+        else:
+            dtype = Text
+        columns.append(Column(col.target_field, dtype, nullable=col.nullable))
+
+    technical = [
+        Column("_ingest_run_id", BIGINT, nullable=True),
+        Column("_ingest_extracted_at", DateTime(timezone=True), nullable=True),
+        Column("_ingest_loaded_at", DateTime(timezone=True), nullable=False, server_default=text("NOW()")),
+        Column("_source_record_id", Text, nullable=True),
+    ]
+    if keep_raw_payload:
+        technical.append(Column("_raw", JSONB, nullable=True))
+
+    constraints = []
+    if stream_rules.primary_key:
+        constraints.append(PrimaryKeyConstraint(*stream_rules.primary_key))
+    else:
+        surrogate_name = "id"
+        if any(c.name == "id" for c in columns):
+            surrogate_name = "_surrogate_id"
+        technical.insert(0, Column(surrogate_name, BIGINT, primary_key=True, autoincrement=True))
+
     return Table(
-        tname,
+        table_name,
         metadata,
-        Column("source_system", String(64), nullable=False),
-        Column("source_record_id", String(512), nullable=False),
-        Column("event_datetime", DateTime(timezone=True)),
-        Column("amount", Numeric(18, 4)),
-        Column("amount_rub", Numeric(18, 4)),
-        Column("currency_code", String(16)),
-        Column("counterparty_name", Text),
-        Column("channel", String(128)),
-        Column("line_description", Text),
-        Column("status", String(128)),
-        Column("cbr_rate_date", Date),
-        Column("line_unit_normalized", String(64)),
-        Column("person_full_name", Text),
-        Column("person_family_name", String(128)),
-        Column("person_given_name", String(128)),
-        Column("person_patronymic", String(128)),
-        Column("contact_phone_e164", String(32)),
-        Column("contact_email", String(256)),
-        Column("country_code", String(2)),
-        Column("order_status_code", String(64)),
-        Column("payment_status_code", String(64)),
-        Column("shipment_status_code", String(64)),
-        Column("normalization_meta", JSONB),
-        Column("loaded_at", DateTime(timezone=True), nullable=False),
-        Column("_ingest_loaded_at", DateTime(timezone=True), nullable=True),
-        PrimaryKeyConstraint("source_system", "source_record_id"),
+        *columns,
+        *technical,
+        *constraints,
+        schema=schema,
     )
+
+
+def validate_stream_rules_compatible(old: StreamRules, new: StreamRules) -> None:
+    """Проверяет, можно ли эволюционировать схему без recreate stream."""
+    old_map = {c.target_field: c.type for c in old.columns}
+    new_map = {c.target_field: c.type for c in new.columns}
+    for col_name, old_type in old_map.items():
+        if col_name in new_map and new_map[col_name] != old_type:
+            raise ValueError(f"recreate stream required: column {col_name} type changed {old_type} -> {new_map[col_name]}")

@@ -160,6 +160,18 @@ export function fetchV1AuditLog(query: AuditLogQuery = {}, init?: ApiRequestInit
   return apiGetJson<{ items: AuditLogRowDto[] }>(`/api/v1/audit-log${q ? `?${q}` : ""}`, { ...init });
 }
 
+export function fetchV1Queue(init?: ApiRequestInit) {
+  return apiGetJson<{ items: Record<string, unknown>[] }>("/api/v1/queue", { ...init });
+}
+
+export function fetchV1Activity(init?: ApiRequestInit) {
+  return apiGetJson<{ items: Record<string, unknown>[] }>("/api/v1/activity", { ...init });
+}
+
+export function fetchV1Schedules(init?: ApiRequestInit) {
+  return apiGetJson<{ items: Record<string, unknown>[] }>("/api/v1/schedules", { ...init });
+}
+
 export function fetchDbtModels(init?: ApiRequestInit) {
   return apiGetJson<DbtModelsResponseDto>("/api/v1/dbt/models", { ...init });
 }

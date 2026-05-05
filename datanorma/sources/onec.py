@@ -14,6 +14,7 @@ from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
 from datanorma.sources.schema_inference import records_to_json_schema
+from datanorma.normalization.default_stream_rules import default_stream_rules_from_json_schema
 
 _log = logging.getLogger(__name__)
 
@@ -116,3 +117,13 @@ class OneCSource(BaseSource):
         )
         _log.info("1С read: строк %s из %s", len(records), path)
         yield from records
+
+    def default_stream_rules(self, stream_name: str, json_schema: dict) -> "StreamRules":
+        # Для 1С в текущей схеме курсор не задан, primary_key не ограничиваем.
+        return default_stream_rules_from_json_schema(
+            stream_name=stream_name,
+            json_schema=json_schema,
+            cursor_field=None,
+            primary_key=None,
+            sync_mode="full_refresh",
+        )

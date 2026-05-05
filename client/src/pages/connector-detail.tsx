@@ -1,14 +1,42 @@
+import { useQuery } from "@tanstack/react-query";
 import { useRoute } from "wouter";
 import { LinkAsButton } from "@/components/link-as-button";
-import { connectorsCatalog } from "@/lib/mock-data";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import type { ConnectorCatalogItem } from "@/lib/types";
+
+function mapRole(v: string): ConnectorCatalogItem["role"] {
+  if (v === "source" || v === "destination" || v === "both") return v;
+  return "source";
+}
 
 export function ConnectorDetailPage() {
   const [, params] = useRoute("/connectors/:connectorId");
-  const c = connectorsCatalog.find((x) => x.id === params?.connectorId);
+  const connectorId = params?.connectorId ?? "";
+  const query = useQuery({
+    queryKey: ["connector-detail", connectorId],
+    queryFn: async () => {
+      const resp = await fetch(`/api/v1/connectors/catalog/${encodeURIComponent(connectorId)}`);
+      const body = (await resp.json()) as { item?: Record<string, unknown> };
+      const item = body.item ?? {};
+      return {
+        id: String(item.code ?? ""),
+        name: String(item.name ?? ""),
+        category: String(item.category ?? "source"),
+        region: "ru" as const,
+        role: mapRole(String(item.category ?? "source")),
+        preview: false,
+        description: String(item.name ?? ""),
+        streams: Array.isArray(item.streams) ? item.streams.map((s) => String((s as Record<string, unknown>).stream_name ?? "")) : [],
+        auth: "—",
+      } satisfies ConnectorCatalogItem;
+    },
+    enabled: Boolean(connectorId),
+  });
+  const c = query.data;
 
+  if (query.isPending) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
   if (!c) {
     return (
       <div className="p-4" data-testid="state-not-found-connector">

@@ -26,7 +26,7 @@ def _url() -> str:
 
 
 def _clear_seed_rows(conn: Connection) -> None:
-    conn.execute(text("DELETE FROM canonical_sales WHERE source_system LIKE 'seed_%'"))
+    conn.execute(text("DELETE FROM normalized.seed_demo__orders WHERE source_system LIKE 'seed_%'"))
     conn.execute(text("DELETE FROM user_role WHERE user_id IN (SELECT id FROM app_user WHERE username LIKE 'seed_%')"))
     conn.execute(text("DELETE FROM app_user WHERE username LIKE 'seed_%'"))
     conn.execute(text("DELETE FROM normalization_issue WHERE issue_type = 'seed_demo'"))
@@ -264,27 +264,37 @@ def seed_staging_and_issues(conn: Connection) -> None:
         )
 
 
-def seed_canonical_bulk(conn: Connection) -> None:
+def seed_normalized_bulk(conn: Connection) -> None:
     loaded_at = datetime.now(timezone.utc)
     systems = ["seed_1c", "seed_ozon", "seed_sheet"]
+    conn.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS normalized.seed_demo__orders (
+                id bigserial PRIMARY KEY,
+                source_system text,
+                source_record_id text,
+                event_datetime timestamptz,
+                amount numeric,
+                currency_code text,
+                status text,
+                channel text,
+                loaded_at timestamptz
+            )
+            """
+        )
+    )
     stmt = text(
-        "INSERT INTO canonical_sales ("
-        "source_system, source_record_id, event_datetime, amount, amount_rub, currency_code, "
-        "counterparty_name, channel, line_description, status, cbr_rate_date, "
-        "line_unit_normalized, person_full_name, person_family_name, person_given_name, person_patronymic, "
-        "contact_phone_e164, contact_email, country_code, order_status_code, payment_status_code, shipment_status_code, "
-        "normalization_meta, loaded_at, _ingest_loaded_at"
+        "INSERT INTO normalized.seed_demo__orders ("
+        "source_system, source_record_id, event_datetime, amount, currency_code, status, channel, loaded_at"
         ") VALUES ("
-        ":ss, :sid, :ed, :am, :ar, :cc, :cp, :ch, :ld, :st, :cbr, :lu, "
-        ":pfn, :pfam, :pgiv, :ppat, :cph, :cem, :ctry, :ost, :pst, :sst, "
-        "CAST(:nm AS jsonb), :la, :ala)"
+        ":ss, :sid, :ed, :am, :cc, :st, :ch, :la)"
     )
     base_date = date(2024, 6, 1)
     for i in range(520):
         ss = systems[i % 3]
         sid = f"{ss.upper()}-{i:05d}"
         d = base_date + timedelta(days=i % 120)
-        meta = {"seed": True, "batch_index": i % 17}
         conn.execute(
             stmt,
             {
@@ -292,27 +302,10 @@ def seed_canonical_bulk(conn: Connection) -> None:
                 "sid": sid,
                 "ed": datetime(d.year, d.month, d.day, 12, 0, tzinfo=timezone.utc),
                 "am": Decimal("100.00") + Decimal(i % 50),
-                "ar": Decimal("100.00") + Decimal(i % 50),
                 "cc": "RUB",
-                "cp": f"Контрагент {i % 40}",
                 "ch": "retail" if i % 2 == 0 else "online",
-                "ld": f"Строка заказа {i}",
                 "st": "paid",
-                "cbr": d,
-                "lu": "шт" if i % 3 == 0 else None,
-                "pfn": None,
-                "pfam": None,
-                "pgiv": None,
-                "ppat": None,
-                "cph": None,
-                "cem": None,
-                "ctry": "RU" if i % 5 == 0 else None,
-                "ost": None,
-                "pst": None,
-                "sst": None,
-                "nm": json.dumps(meta),
                 "la": loaded_at,
-                "ala": loaded_at,
             },
         )
 
@@ -326,9 +319,9 @@ def run(engine: Engine | None = None) -> dict[str, int]:
         seed_roles_and_users(conn)
         seed_config_and_meta(conn)
         seed_staging_and_issues(conn)
-        seed_canonical_bulk(conn)
-        counts["canonical_sales_seed"] = conn.execute(
-            text("SELECT COUNT(*) FROM canonical_sales WHERE source_system LIKE 'seed_%'")
+        seed_normalized_bulk(conn)
+        counts["normalized_orders_seed"] = conn.execute(
+            text("SELECT COUNT(*) FROM normalized.seed_demo__orders WHERE source_system LIKE 'seed_%'")
         ).scalar_one()
         counts["normalization_issue_seed"] = conn.execute(
             text("SELECT COUNT(*) FROM normalization_issue WHERE issue_type = 'seed_demo'")

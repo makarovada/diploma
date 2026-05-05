@@ -1,11 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
-import { sources as demoSources } from "@/lib/mock-data";
 import { buildSourcesFromDimAndV1, fetchDimSources, fetchV1Connections } from "@/lib/api-datanorma";
-import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { Input } from "@/components/ui/input";
-import { withApiOrDemo } from "@/lib/demo-fallback";
 import { queryKeys } from "@/lib/query-keys";
 
 const checkLabel: Record<string, string> = {
@@ -18,25 +15,21 @@ const checkLabel: Record<string, string> = {
 export function SourcesPage() {
   const query = useQuery({
     queryKey: queryKeys.sources.list(),
-    queryFn: () =>
-      withApiOrDemo(async () => {
-        const [dim, v1] = await Promise.all([fetchDimSources(), fetchV1Connections()]);
-        return buildSourcesFromDimAndV1(dim.rows, v1.items);
-      }, demoSources),
+    queryFn: async () => {
+      const [dim, v1] = await Promise.all([fetchDimSources(), fetchV1Connections()]);
+      return buildSourcesFromDimAndV1(dim.rows, v1.items);
+    },
   });
 
   if (query.isPending) return <div data-testid="state-loading-sources" className="p-4">Загрузка источников…</div>;
   if (query.isError) return <div data-testid="state-error-sources" className="p-4">Ошибка загрузки источников.</div>;
 
-  const pack = query.data;
-  const list = pack?.value ?? [];
-  const isDemo = pack?.isDemoFallback ?? false;
+  const list = query.data ?? [];
 
   if (list.length === 0) {
     return (
       <div className="p-4">
         <PageHeader title="Источники" description="Сохранённые подключения к системам-источникам" breadcrumbs="Интеграции / Источники" actions={<LinkAsButton href="/sources/new" data-testid="button-add-source">Добавить источник</LinkAsButton>} />
-        {isDemo ? <DemoFallbackBanner /> : null}
         <div data-testid="state-empty-sources" className="rounded-lg border bg-card p-8 text-center">
           <p className="font-medium">Источников пока нет</p>
           <p className="mt-1 text-sm text-muted-foreground">Создайте источник из каталога коннекторов или дождитесь записей в sync_state / dim_source_system.</p>
@@ -51,7 +44,6 @@ export function SourcesPage() {
   return (
     <div className="p-4">
       <PageHeader title="Источники" description="Сохранённые подключения к системам-источникам" breadcrumbs="Интеграции / Источники" actions={<LinkAsButton href="/sources/new" data-testid="button-add-source">Добавить источник</LinkAsButton>} />
-      {isDemo ? <DemoFallbackBanner /> : null}
       <div className="mb-3 flex flex-wrap gap-2">
         <Input className="max-w-sm" placeholder="Поиск по названию или коннектору…" data-testid="input-sources-search" />
       </div>

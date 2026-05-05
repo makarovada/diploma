@@ -1,4 +1,4 @@
-"""Чтение stream / sync_mode / cursor_field из source_mappings.yaml."""
+"""Утилиты конфигурации stream/sync_mode/cursor_field."""
 
 from __future__ import annotations
 
@@ -47,9 +47,9 @@ def integration_code_from_yaml_key(key: str) -> str:
     return k
 
 
-def parse_all_stream_configs(mappings: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """По ключу integration_code (как в коде: ozon, 1c, google_sheet)."""
-    sources = mappings.get("sources") or {}
+def parse_all_stream_configs(mappings: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
+    """Собирает базовую конфигурацию потоков по integration_code."""
+    sources = (mappings or {}).get("sources") or {}
     out: dict[str, dict[str, Any]] = {}
     for key, cfg in sources.items():
         if not isinstance(cfg, dict):

@@ -5,15 +5,13 @@ import { PageHeader } from "@/components/page-header";
 import { StepCheckDestination } from "@/components/connection-wizard/step-check-destination";
 import { StepCheckSource } from "@/components/connection-wizard/step-check-source";
 import { StepDestination } from "@/components/connection-wizard/step-destination";
-import { StepDiscoverStreams } from "@/components/connection-wizard/step-discover-streams";
-import { StepMapping } from "@/components/connection-wizard/step-mapping";
 import { StepName } from "@/components/connection-wizard/step-name";
-import { StepNormalization } from "@/components/connection-wizard/step-normalization";
+import { StepStreamsAndColumns } from "@/components/connection-wizard/step-streams-and-columns";
 import { StepReview } from "@/components/connection-wizard/step-review";
 import { StepSaveRun } from "@/components/connection-wizard/step-save-run";
 import { StepSchedule } from "@/components/connection-wizard/step-schedule";
 import { StepSource } from "@/components/connection-wizard/step-source";
-import { StepSourceCredentials } from "@/components/connection-wizard/step-source-credentials";
+import { ConnectorConfigForm } from "@/components/connection-wizard/connector-config-form";
 import { WIZARD_STEP_COUNT, WIZARD_STEP_LABELS } from "@/components/connection-wizard/wizard-constants";
 import { jsonSchemaRequiredList, schemaPropertyKeys } from "@/components/connection-wizard/schema-utils";
 import type {
@@ -227,7 +225,7 @@ export function ConnectionWizardShell() {
   }, [form.destinationId]);
 
   useEffect(() => {
-    if (step !== 7 || !form.discovery) return;
+    if (step !== 1 || !form.discovery) return;
     const built = buildMappingRowsFromDiscovery(form.discovery, form.enabledStreamNames);
     setForm((f) => ({
       ...f,
@@ -236,7 +234,7 @@ export function ConnectionWizardShell() {
   }, [step, form.discovery, form.enabledStreamNames]);
 
   useEffect(() => {
-    if (step !== 10 || !form.sourceId || !form.destinationId) return;
+    if (step !== 3 || !form.sourceId || !form.destinationId) return;
     let cancelled = false;
     setPreflightRunning(true);
     setForm((f) => ({ ...f, preflightOk: null, preflightMessage: null }));
@@ -353,7 +351,7 @@ export function ConnectionWizardShell() {
     checkDstMutation.isPending;
 
   const goNext = () => {
-    if (step === 9) {
+    if (step === 2) {
       setForm((f) => ({ ...f, preflightOk: null, preflightMessage: null }));
     }
     if (blocked || busyNav) return;
@@ -546,46 +544,42 @@ export function ConnectionWizardShell() {
       </div>
 
       {step === 0 && (
-        <StepName
-          name={form.connectionName}
-          description={form.connectionDescription}
-          onChange={(p) => updateForm(p)}
-          nameError={null}
-        />
+        <div className="space-y-4">
+          <StepName
+            name={form.connectionName}
+            description={form.connectionDescription}
+            onChange={(p) => updateForm(p)}
+            nameError={null}
+          />
+
+          <StepSource
+            sources={sources}
+            sourceId={form.sourceId}
+            onSelectSourceId={(id) => updateForm({ sourceId: id })}
+            loading={sourcesQuery.isPending}
+            emptyHint={sourcesQuery.isError ? "Не удалось загрузить источники (проверьте права и API)." : null}
+          />
+
+          <ConnectorConfigForm
+            configText={form.credentialsConfigText}
+            needsPersist={form.credentialsSavedText !== form.credentialsConfigText}
+            onChangeText={(credentialsConfigText) => updateForm({ credentialsConfigText })}
+            onSaveConfig={onSaveCredentials}
+            saving={patchCfgMutation.isPending}
+            saveError={saveCredError}
+          />
+
+          <StepCheckSource
+            check={form.sourceCheck}
+            checking={checkSrcMutation.isPending}
+            onRunCheck={onRunSourceCheck}
+            checkError={checkSrcErr}
+          />
+        </div>
       )}
 
       {step === 1 && (
-        <StepSource
-          sources={sources}
-          sourceId={form.sourceId}
-          onSelectSourceId={(id) => updateForm({ sourceId: id })}
-          loading={sourcesQuery.isPending}
-          emptyHint={sourcesQuery.isError ? "Не удалось загрузить источники (проверьте права и API)." : null}
-        />
-      )}
-
-      {step === 2 && (
-        <StepSourceCredentials
-          configText={form.credentialsConfigText}
-          needsPersist={form.credentialsSavedText !== form.credentialsConfigText}
-          onChangeText={(credentialsConfigText) => updateForm({ credentialsConfigText })}
-          onSaveConfig={onSaveCredentials}
-          saving={patchCfgMutation.isPending}
-          saveError={saveCredError}
-        />
-      )}
-
-      {step === 3 && (
-        <StepCheckSource
-          check={form.sourceCheck}
-          checking={checkSrcMutation.isPending}
-          onRunCheck={onRunSourceCheck}
-          checkError={checkSrcErr}
-        />
-      )}
-
-      {step === 4 && (
-        <StepDiscoverStreams
+        <StepStreamsAndColumns
           discovery={form.discovery}
           discoveryError={form.discoveryError}
           discovering={discoverMutation.isPending}
@@ -594,62 +588,49 @@ export function ConnectionWizardShell() {
           streamOptions={form.streamOptions}
           onToggleStream={onToggleStream}
           onChangeStreamOption={onChangeStreamOption}
+          mappingRows={form.mappingRows}
+          onChangeMappingRow={onChangeMappingRow}
         />
       )}
 
-      {step === 5 && (
-        <StepDestination
-          destinations={destinations}
-          destinationId={form.destinationId}
-          onSelectDestinationId={(id) => updateForm({ destinationId: id })}
-          loading={destQuery.isPending}
-        />
+      {step === 2 && (
+        <div className="space-y-4">
+          <StepDestination
+            destinations={destinations}
+            destinationId={form.destinationId}
+            onSelectDestinationId={(id) => updateForm({ destinationId: id })}
+            loading={destQuery.isPending}
+          />
+
+          <StepCheckDestination
+            check={form.destinationCheck}
+            checking={checkDstMutation.isPending}
+            onRunCheck={onRunDestCheck}
+            checkError={checkDstErr}
+          />
+        </div>
       )}
 
-      {step === 6 && (
-        <StepCheckDestination
-          check={form.destinationCheck}
-          checking={checkDstMutation.isPending}
-          onRunCheck={onRunDestCheck}
-          checkError={checkDstErr}
-        />
-      )}
+      {step === 3 && (
+        <div className="space-y-4">
+          <StepSchedule cron={form.scheduleCron} timezone={form.timezone} onChange={(p) => updateForm(p)} />
 
-      {step === 7 && <StepMapping rows={form.mappingRows} onChangeRow={onChangeMappingRow} />}
+          <StepReview
+            form={form}
+            sourceLabel={sourceLabel}
+            destinationLabel={destinationLabel}
+            preflightRunning={preflightRunning}
+          />
 
-      {step === 8 && (
-        <StepNormalization
-          enabled={form.normalizationEnabled}
-          onToggle={(normalizationEnabled) => updateForm({ normalizationEnabled })}
-        />
-      )}
-
-      {step === 9 && (
-        <StepSchedule
-          cron={form.scheduleCron}
-          timezone={form.timezone}
-          onChange={(p) => updateForm(p)}
-        />
-      )}
-
-      {step === 10 && (
-        <StepReview
-          form={form}
-          sourceLabel={sourceLabel}
-          destinationLabel={destinationLabel}
-          preflightRunning={preflightRunning}
-        />
-      )}
-
-      {step === 11 && (
-        <StepSaveRun
-          saving={saveConnectionMutation.isPending && saveAction === "save"}
-          triggering={saveConnectionMutation.isPending && saveAction === "run"}
-          saveError={submitErr}
-          doneMessage={doneMsg}
-          onSaveOnly={onSaveOnly}
-          onSaveAndRun={onSaveAndRun}
-        />
+          <StepSaveRun
+            saving={saveConnectionMutation.isPending && saveAction === "save"}
+            triggering={saveConnectionMutation.isPending && saveAction === "run"}
+            saveError={submitErr}
+            doneMessage={doneMsg}
+            onSaveOnly={onSaveOnly}
+            onSaveAndRun={onSaveAndRun}
+          />
+        </div>
       )}
 
       <div className="mt-4 flex justify-between">
@@ -660,7 +641,7 @@ export function ConnectionWizardShell() {
           <Button
             type="button"
             onClick={goNext}
-            disabled={blocked || busyNav || (step === 10 && preflightRunning)}
+            disabled={blocked || busyNav}
             data-testid="button-step-next"
           >
             Далее

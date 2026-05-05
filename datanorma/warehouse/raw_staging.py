@@ -13,7 +13,6 @@ from sqlalchemy.engine import Connection, Engine
 
 from datanorma.ingest.cursor_filter import max_cursor_from_dict_rows, max_cursor_from_postings
 from datanorma.ingest.stream_config import parse_all_stream_configs
-from datanorma.normalization.to_canonical import load_source_mappings
 from datanorma.warehouse.sync_state_repo import build_ingest_state_dict, ensure_phase1_schema
 
 _log = logging.getLogger(__name__)
@@ -58,7 +57,6 @@ def load_raw_to_staging(
     raw_sheet: dict[str, Any],
     mappings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    mappings = mappings or load_source_mappings()
     ensure_phase1_schema(engine)
     stream_cfgs = parse_all_stream_configs(mappings)
     batch_id = uuid.uuid4()

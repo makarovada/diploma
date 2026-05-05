@@ -53,6 +53,7 @@ from datanorma.web.sync_runs import (
     resolve_connection,
 )
 from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
+from datanorma.web.api_v1_catalog import register_api_v1_catalog_routes
 from datanorma.web.api_elt import get_elt_workspace_id, register_elt_routes
 from datanorma.web.elt_repo import list_destinations, public_destination_payload
 from datanorma.web.users_repo import (
@@ -1553,6 +1554,7 @@ def v1_audit_log_list(
     return {"items": rows}
 
 
+register_api_v1_catalog_routes(v1)
 register_elt_routes(v1)
 
 router.include_router(v1)

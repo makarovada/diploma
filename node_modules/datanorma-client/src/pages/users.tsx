@@ -1,8 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { appUsers as demoUsers } from "@/lib/mock-data";
 import { fetchAdminUsers } from "@/lib/api-datanorma";
-import { DemoFallbackBanner } from "@/components/demo-fallback-banner";
-import { withApiOrDemo } from "@/lib/demo-fallback";
 import { queryKeys } from "@/lib/query-keys";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
@@ -40,24 +37,21 @@ function mapApiUser(u: { id: number; username: string; email: string | null; rol
 export function UsersPage() {
   const query = useQuery({
     queryKey: queryKeys.users.list(),
-    queryFn: () =>
-      withApiOrDemo(async () => {
-        const { users } = await fetchAdminUsers();
-        return users.map((u) => mapApiUser(u));
-      }, demoUsers),
+    queryFn: async () => {
+      const { users } = await fetchAdminUsers();
+      return users.map((u) => mapApiUser(u));
+    },
   });
 
   if (query.isPending) return <div data-testid="state-loading-users" className="p-4">Загрузка пользователей…</div>;
   if (query.isError || !query.data) return <div data-testid="state-error-users" className="p-4">Ошибка загрузки.</div>;
 
-  const rows = query.data.value;
-  const isDemo = query.data.isDemoFallback;
+  const rows = query.data;
 
   if (rows.length === 0) {
     return (
       <div className="p-4">
         <PageHeader title="Пользователи и роли" description="Доступ к интеграциям и администрированию" breadcrumbs="Администрирование / Пользователи" actions={<Button data-testid="button-invite-user">Пригласить пользователя</Button>} />
-        {isDemo ? <DemoFallbackBanner /> : null}
         <div data-testid="state-empty-users" className="rounded-lg border bg-card p-8 text-center text-sm text-muted-foreground">
           Пользователей не найдено.
         </div>
@@ -68,7 +62,6 @@ export function UsersPage() {
   return (
     <div className="p-4">
       <PageHeader title="Пользователи и роли" description="Доступ к интеграциям и администрированию" breadcrumbs="Администрирование / Пользователи" actions={<Button data-testid="button-invite-user">Пригласить пользователя</Button>} />
-      {isDemo ? <DemoFallbackBanner /> : null}
       <div className="overflow-auto rounded-lg border" data-testid="table-users">
         <table className="w-full min-w-[900px] text-left text-sm" aria-label="Пользователи">
           <thead className="bg-muted">

@@ -1,12 +1,16 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { connectorsCatalog } from "@/lib/mock-data";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import type { ConnectorCatalogItem } from "@/lib/types";
+
+function mapRole(v: string): ConnectorCatalogItem["role"] {
+  if (v === "source" || v === "destination" || v === "both") return v;
+  return "source";
+}
 
 export function ConnectorsPage() {
   const [q, setQ] = useState("");
@@ -16,8 +20,20 @@ export function ConnectorsPage() {
   const query = useQuery({
     queryKey: ["connectors-catalog"],
     queryFn: async () => {
-      await new Promise((r) => setTimeout(r, 180));
-      return connectorsCatalog;
+      const resp = await fetch("/api/v1/connectors/catalog");
+      const body = (await resp.json()) as { items?: Array<Record<string, unknown>> };
+      const items = Array.isArray(body.items) ? body.items : [];
+      return items.map((x) => ({
+        id: String(x.code ?? ""),
+        name: String(x.name ?? ""),
+        category: String(x.category ?? "Общее"),
+        region: "ru" as const,
+        role: mapRole(String(x.category ?? "source")),
+        preview: false,
+        description: String(x.name ?? ""),
+        streams: Array.isArray(x.streams) ? x.streams.map((s) => String((s as Record<string, unknown>).stream_name ?? "")) : [],
+        auth: "—",
+      }));
     },
   });
 

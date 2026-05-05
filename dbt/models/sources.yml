@@ -1,7 +1,7 @@
 version: 2
 
 sources:
-  - name: public
-    schema: public
+  - name: normalized
+    schema: normalized
     tables:
-      - name: typed_canonical_sales
+      - name: seed_demo__orders

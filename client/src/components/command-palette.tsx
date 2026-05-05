@@ -1,44 +1,19 @@
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { Search } from "lucide-react";
-import { connections, connectorsCatalog, issues, runs } from "@/lib/mock-data";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 type PaletteItem = { id: string; label: string; hint: string; href: string };
 
 function buildItems(): PaletteItem[] {
-  const c = connections.map((x) => ({
-    id: `conn-${x.id}`,
-    label: x.name,
-    hint: "Подключение",
-    href: `/connections/${x.id}`,
-  }));
-  const r = runs.map((x) => ({
-    id: `run-${x.id}`,
-    label: `${x.id} · ${x.connectionName}`,
-    hint: "Запуск",
-    href: `/runs/${x.id}`,
-  }));
-  const i = issues.map((x) => ({
-    id: `issue-${x.id}`,
-    label: `${x.type} · ${x.field}`,
-    hint: "Проблемная запись",
-    href: `/issues/${x.id}`,
-  }));
-  const conn = connectorsCatalog.map((x) => ({
-    id: `connector-${x.id}`,
-    label: x.name,
-    hint: "Коннектор",
-    href: `/connectors/${x.id}`,
-  }));
   return [
     { id: "nav-settings", label: "Настройки", hint: "Раздел", href: "/settings" },
     { id: "nav-norm", label: "Нормализация", hint: "Раздел", href: "/normalization" },
-    ...c,
-    ...r,
-    ...i,
-    ...conn,
+    { id: "nav-connections", label: "Подключения", hint: "Раздел", href: "/connections" },
+    { id: "nav-runs", label: "Запуски", hint: "Раздел", href: "/runs" },
+    { id: "nav-issues", label: "Проблемные записи", hint: "Раздел", href: "/issues" },
+    { id: "nav-connectors", label: "Каталог коннекторов", hint: "Раздел", href: "/connectors" },
   ];
 }
 

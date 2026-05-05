@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import Annotated, Any
-from unittest.mock import MagicMock
 
 import jwt
 from fastapi import Depends, Header, HTTPException
@@ -160,7 +159,8 @@ def _ensure_workspace_membership(conn: Connection, user: AuthUser, workspace_id:
 
 def resolve_effective_workspace_id(conn: Connection, user: AuthUser, x_workspace_id: str | None) -> int:
     """Текущий workspace: заголовок X-Workspace-Id, иначе claims токена; проверка членства."""
-    if isinstance(conn, MagicMock):
+    # Тестовые dependency_overrides часто прокидывают unittest.mock connection.
+    if conn.__class__.__module__.startswith("unittest.mock"):
         return 1
     wid = _candidate_workspace_id(x_workspace_id, user)
     _ensure_workspace_membership(conn, user, wid)

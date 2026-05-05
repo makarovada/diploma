@@ -1,7 +1,20 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 import { MappingTable } from "@/components/mapping-table";
-import { mappingRows } from "@/lib/mock-data";
+import type { MappingRow } from "@/lib/types";
+
+const mappingRows: MappingRow[] = [
+  {
+    sourceField: "order_id",
+    type: "string",
+    targetField: "order.external_id",
+    transformation: "",
+    required: true,
+    sample: "123",
+    preview: "123",
+    state: "mapped",
+  },
+];
 
 describe("MappingTable", () => {
   it("renders mapping rows and filter button", () => {

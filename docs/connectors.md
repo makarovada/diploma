@@ -14,6 +14,17 @@
 - 1C
 - Google Sheets
 - Яндекс Метрика
+- Wildberries
+- Bitrix24
+- amoCRM
+- МойСклад
+
+## Приёмники
+
+- PostgreSQL
+- ClickHouse
+- CSV
+- XLSX
 
 ## Архитектурное правило
 

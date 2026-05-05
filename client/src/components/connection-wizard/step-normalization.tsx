@@ -1,5 +1,12 @@
-import { normalizationRules } from "@/lib/mock-data";
 import { NormalizationRuleCard } from "@/components/normalization-rule-card";
+import type { NormalizationRule } from "@/lib/types";
+
+const normalizationRules: NormalizationRule[] = [
+  { id: "rule-date", title: "Даты и время", enabled: true, fixedCount: 0, issuesCount: 0, description: "Разбор дат/времени." },
+  { id: "rule-phone", title: "Телефоны", enabled: true, fixedCount: 0, issuesCount: 0, description: "Нормализация E.164." },
+  { id: "rule-email", title: "Email", enabled: true, fixedCount: 0, issuesCount: 0, description: "trim/lowercase." },
+  { id: "rule-inn", title: "ИНН / КПП", enabled: true, fixedCount: 0, issuesCount: 0, description: "Проверка формата." },
+];
 
 type Props = {
   enabled: boolean;

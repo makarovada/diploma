@@ -1,15 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity } from "lucide-react";
-import { activityEvents } from "@/lib/mock-data";
 import { PageHeader } from "@/components/page-header";
 import { Card } from "@/components/ui/card";
+import { fetchV1Activity, formatTs } from "@/lib/api-datanorma";
+import type { ActivityEvent } from "@/lib/types";
+
+function mapActivityEvent(row: Record<string, unknown>, idx: number): ActivityEvent {
+  const action = String(row.action ?? "action");
+  const actor = String(row.actor ?? "system");
+  const details = String(row.details ?? "");
+  return {
+    id: String(row.id ?? `activity-${idx}`),
+    at: formatTs((row.created_at as string | null | undefined) ?? null),
+    type: "config",
+    title: `${action}`,
+    detail: `${actor}${details ? ` · ${details}` : ""}`,
+  };
+}
 
 export function ActivityPage() {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["activity"],
     queryFn: async () => {
-      await new Promise((r) => setTimeout(r, 200));
-      return activityEvents;
+      const resp = await fetchV1Activity();
+      return resp.items.map(mapActivityEvent);
     },
   });
 

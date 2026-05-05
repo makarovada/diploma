@@ -7,7 +7,6 @@ from datetime import datetime, timezone
 import dagster as dg
 
 from datanorma.ingest.stream_config import parse_all_stream_configs
-from datanorma.normalization.to_canonical import load_source_mappings
 from datanorma.resources.database import PostgresResource
 from datanorma.warehouse.sync_state_repo import extract_stream_cursor, fetch_sync_state_map
 
@@ -15,11 +14,10 @@ from datanorma.warehouse.sync_state_repo import extract_stream_cursor, fetch_syn
 @dg.asset(
     group_name="sync",
     compute_kind="postgres",
-    description="Каталог потоков из YAML + последнее sync_state из PostgreSQL (перед raw assets).",
+    description="Каталог потоков + последнее sync_state из PostgreSQL (перед raw assets).",
 )
 def sync_catalog(postgres: PostgresResource) -> dict:
-    mappings = load_source_mappings()
-    yaml_streams = parse_all_stream_configs(mappings)
+    yaml_streams = parse_all_stream_configs()
     engine = postgres.get_engine()
     db_map = fetch_sync_state_map(engine)
 
@@ -37,6 +35,6 @@ def sync_catalog(postgres: PostgresResource) -> dict:
 
     return {
         "catalog_loaded_at": datetime.now(timezone.utc).isoformat(),
-        "mappings_version": mappings.get("version"),
+        "mappings_version": "rules_v1",
         "streams": streams_out,
     }
