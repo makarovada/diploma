@@ -10,6 +10,8 @@ from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import create_source
 from datanorma.sources.yandex_metrika import STREAM_FIXTURE_NAMES, YandexMetrikaSource
 
+pytestmark = pytest.mark.unit
+
 
 def _write_samples(root: Path) -> None:
     samples = root / "data" / "samples"

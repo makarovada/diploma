@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from datanorma.web import api_router as api_mod
 from datanorma.web.deps import AuthUser, get_conn, get_current_user
 from datanorma.web.main import create_app
+
+pytestmark = pytest.mark.integration
 
 
 def _client() -> TestClient:

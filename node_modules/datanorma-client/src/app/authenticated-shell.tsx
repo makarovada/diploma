@@ -6,7 +6,7 @@ import { MainShell } from "@/components/main-shell";
 import { ActivityPage } from "@/pages/activity";
 import { ApiDocsPage } from "@/pages/api-docs";
 import { AuditPage } from "@/pages/audit";
-import { CanonicalModelPage } from "@/pages/canonical-model";
+import { SemanticLayerPage } from "@/pages/semantic-layer";
 import { ConnectionDetailPage } from "@/pages/connection-detail";
 import { ConnectionEditPage } from "@/pages/connection-edit";
 import { ConnectionIssuesPage } from "@/pages/connection-issues";
@@ -87,7 +87,8 @@ function MainRoutes() {
         <Route path="/normalization/rules" component={NormalizationRulesPage} />
         <Route path="/normalization/dictionaries" component={NormalizationDictionariesPage} />
         <Route path="/normalization" component={NormalizationPage} />
-        <Route path="/canonical-model" component={CanonicalModelPage} />
+        <Route path="/semantic-layer" component={SemanticLayerPage} />
+        <Route path="/canonical-model" component={SemanticLayerPage} />
         <Route path="/issues/:issueId" component={IssueDetailPage} />
         <Route path="/issues" component={IssuesPage} />
         <Route path="/data-preview" component={DataPreviewPage} />

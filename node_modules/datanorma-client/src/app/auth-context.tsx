@@ -3,9 +3,12 @@ import { useLocation } from "wouter";
 import {
   ApiError,
   clearStoredToken,
+  clearStoredWorkspaceId,
   configureApiAuth,
   getStoredToken,
+  getStoredWorkspaceId,
   setStoredToken,
+  setStoredWorkspaceId,
 } from "@/lib/api-client";
 import { fetchAuthMe, postAuthLogin } from "@/lib/auth";
 import type { MeDto } from "@/lib/api-types";
@@ -56,10 +59,23 @@ export function AuthProvider({ children }: PropsWithChildren) {
 
   const logout = useCallback(() => {
     clearStoredToken();
+    clearStoredWorkspaceId();
     setUser(null);
     setStatus("unauthenticated");
     setLocation("/login");
   }, [setLocation]);
+
+  const syncWorkspaceStorageWithMe = useCallback((me: MeUser) => {
+    const ids = new Set((me.workspaces ?? []).map((w) => w.id));
+    const stored = getStoredWorkspaceId();
+    if (stored !== null && ids.has(stored)) {
+      return;
+    }
+    const fallback = me.active_workspace_id ?? (me.workspaces ?? [])[0]?.id;
+    if (fallback !== undefined && fallback !== null) {
+      setStoredWorkspaceId(fallback);
+    }
+  }, []);
 
   const refreshMe = useCallback(async () => {
     const t = getStoredToken();
@@ -69,14 +85,16 @@ export function AuthProvider({ children }: PropsWithChildren) {
       return;
     }
     const me = await fetchAuthMe();
+    syncWorkspaceStorageWithMe(me);
     setUser(me);
     setStatus("authenticated");
-  }, []);
+  }, [syncWorkspaceStorageWithMe]);
 
   useEffect(() => {
     configureApiAuth({
       on401: () => {
         clearStoredToken();
+        clearStoredWorkspaceId();
         setUser(null);
         setStatus("unauthenticated");
         const path = currentHashRoutePath();

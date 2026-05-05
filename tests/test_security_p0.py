@@ -7,6 +7,8 @@ import pytest
 from datanorma.config import clear_settings_cache
 from datanorma.web.main import create_app
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.fixture(autouse=True)
 def _reset_settings_cache():

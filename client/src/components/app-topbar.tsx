@@ -1,8 +1,10 @@
 import { Bell, LogOut, Menu, Search } from "lucide-react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/app/auth-context";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { LinkAsButton } from "@/components/link-as-button";
+import { getStoredWorkspaceId, setStoredWorkspaceId } from "@/lib/api-client";
 
 export function AppTopbar({
   onOpenMobileNav,
@@ -11,7 +13,8 @@ export function AppTopbar({
   onOpenMobileNav: () => void;
   onOpenCommandPalette: () => void;
 }) {
-  const { user, logout } = useAuth();
+  const queryClient = useQueryClient();
+  const { user, logout, refreshMe } = useAuth();
   const initials =
     user?.username
       .split(/[^a-zA-Zа-яА-ЯёЁ0-9]+/)
@@ -19,6 +22,14 @@ export function AppTopbar({
       .slice(0, 2)
       .map((s) => s[0]?.toUpperCase() ?? "")
       .join("") || user?.username.slice(0, 2).toUpperCase() || "—";
+
+  const workspaces = user?.workspaces ?? [];
+  const storedWid = getStoredWorkspaceId();
+  const rawWorkspaceId =
+    storedWid !== null && workspaces.some((w) => w.id === storedWid)
+      ? storedWid
+      : (user?.active_workspace_id ?? workspaces[0]?.id);
+  const selectValue = rawWorkspaceId !== undefined && rawWorkspaceId !== null ? String(rawWorkspaceId) : "";
 
   return (
     <header className="border-b bg-background px-4 py-3" data-testid="topbar-main">
@@ -60,6 +71,30 @@ export function AppTopbar({
         <LinkAsButton href="/connections/new" data-testid="button-quick-action">
           Создать подключение
         </LinkAsButton>
+        {workspaces.length > 0 ? (
+          <label className="flex items-center gap-1 text-xs text-muted-foreground">
+            <span className="hidden sm:inline">Workspace</span>
+            <select
+              className="h-9 max-w-[11rem] truncate rounded-md border border-input bg-background px-2 text-sm text-foreground"
+              data-testid="select-workspace"
+              aria-label="Текущий workspace"
+              value={selectValue}
+              onChange={async (e) => {
+                const v = Number(e.target.value);
+                if (!Number.isFinite(v)) return;
+                setStoredWorkspaceId(v);
+                await refreshMe();
+                void queryClient.invalidateQueries();
+              }}
+            >
+              {workspaces.map((w) => (
+                <option key={w.id} value={w.id}>
+                  {w.code} — {w.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <span
           className="hidden items-center gap-1.5 rounded-full border bg-card px-2 py-1 text-xs text-muted-foreground xl:inline-flex"
           data-testid="indicator-system-status"

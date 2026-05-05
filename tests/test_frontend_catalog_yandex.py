@@ -5,6 +5,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
+pytestmark = pytest.mark.unit
+
 
 def test_mock_data_catalog_has_yandex_metrika_streams() -> None:
     p = Path(__file__).resolve().parent.parent / "client" / "src" / "lib" / "mock-data.ts"

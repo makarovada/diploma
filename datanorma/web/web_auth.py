@@ -7,7 +7,7 @@ from typing import Annotated
 import jwt
 from fastapi import Depends, HTTPException, Request
 
-from datanorma.web.deps import AuthUser
+from datanorma.web.deps import AuthUser, claims_to_auth_user
 from datanorma.web.jwt_util import decode_token
 
 COOKIE_NAME = "datanorma_access_token"
@@ -30,13 +30,7 @@ def auth_user_from_token(token: str) -> AuthUser | None:
         payload = decode_token(token)
     except jwt.InvalidTokenError:
         return None
-    username = payload.get("sub")
-    if not username or not isinstance(username, str):
-        return None
-    roles_raw = payload.get("roles") or []
-    if not isinstance(roles_raw, list):
-        roles_raw = []
-    return AuthUser(username=username, roles=frozenset(str(x) for x in roles_raw))
+    return claims_to_auth_user(payload)
 
 
 def get_web_user_optional(request: Request) -> AuthUser | None:

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
+from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.engine import Connection
 
+from datanorma.destinations.base import WriteMode
+from datanorma.destinations.registry import destination_check, destination_write
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import create_source
-from datanorma.web.config import database_url
-from datanorma.web.deps import AuthUser, get_conn, require_operation
+from datanorma.web.audit_repo import record_audit_event
+from datanorma.web.deps import AuthUser, get_conn, get_engine_cached, require_operation, resolve_actor_user_id
+from datanorma.web.request_audit import client_ip, client_user_agent
 from datanorma.web.elt_repo import (
     EltRepoError,
     create_connection_row,
@@ -44,7 +47,33 @@ from datanorma.web.sync_runs import (
     mark_sync_run_running,
     resolve_connection,
 )
-from sqlalchemy import create_engine, text
+from sqlalchemy import text
+
+
+def _audit_elt(
+    conn: Connection,
+    request: Request | None,
+    user: AuthUser,
+    *,
+    workspace_id: int,
+    action: str,
+    resource_type: str | None,
+    resource_id: str | None,
+    result: str = "success",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    record_audit_event(
+        get_engine_cached(),
+        workspace_id=workspace_id,
+        actor_user_id=resolve_actor_user_id(conn, user),
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        result=result,
+        payload=payload,
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
 
 
 def _user_workspace_ok(conn: Connection, user: AuthUser, workspace_id: int) -> None:
@@ -71,6 +100,11 @@ def _wid(conn: Connection, user: AuthUser, workspace_code: str) -> int:
         raise HTTPException(status_code=404, detail={"error_code": "workspace_not_found"}) from None
     _user_workspace_ok(conn, user, wid)
     return wid
+
+
+def get_elt_workspace_id(conn: Connection, user: AuthUser, workspace_code: str = "main") -> int:
+    """Публичная обёртка для разрешения workspace в других модулях (каталог приёмников и т.п.)."""
+    return _wid(conn, user, workspace_code)
 
 
 class SourceCreateBody(BaseModel):
@@ -101,6 +135,19 @@ class DestinationPatchBody(BaseModel):
     connector_code: str | None = Field(default=None, max_length=64)
     config: dict[str, Any] | None = None
     status: str | None = Field(default=None, max_length=32)
+
+
+class DestinationWriteBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    workspace_code: str = Field(default="main", min_length=1, max_length=64)
+    stream_name: str = Field(min_length=1, max_length=128)
+    records: list[dict[str, Any]] = Field(default_factory=list)
+    stream_schema: dict[str, Any] = Field(default_factory=dict, alias="schema")
+    mode: str = Field(
+        default="append",
+        pattern="^(append|full_refresh|upsert|replace_table)$",
+    )
 
 
 class ConnectionStreamBody(BaseModel):
@@ -147,6 +194,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     @v1.post("/sources", status_code=status.HTTP_201_CREATED)
     def elt_sources_create(
         body: SourceCreateBody,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
     ) -> dict[str, Any]:
@@ -159,7 +207,18 @@ def register_elt_routes(v1: APIRouter) -> None:
             config=body.config,
             created_by=user.username,
         )
-        return {"item": public_source_payload(row)}
+        pl = public_source_payload(row)
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="source_create",
+            resource_type="source",
+            resource_id=str(pl.get("id")),
+            payload={"name": body.name, "connector_code": body.connector_code},
+        )
+        return {"item": pl}
 
     @v1.get("/sources/{source_id}")
     def elt_sources_get(
@@ -178,6 +237,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     def elt_sources_patch(
         source_id: int,
         body: SourcePatchBody,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
     ) -> dict[str, Any]:
@@ -193,11 +253,23 @@ def register_elt_routes(v1: APIRouter) -> None:
         )
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "source_not_found"})
-        return {"item": public_source_payload(row)}
+        pl = public_source_payload(row)
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="source_update",
+            resource_type="source",
+            resource_id=str(source_id),
+            payload={"name": pl.get("name")},
+        )
+        return {"item": pl}
 
     @v1.delete("/sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
     def elt_sources_delete(
         source_id: int,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
@@ -214,6 +286,15 @@ def register_elt_routes(v1: APIRouter) -> None:
             )
         if not delete_source_row(conn, workspace_id=wid, source_id=source_id):
             raise HTTPException(status_code=404, detail={"error_code": "source_not_found"})
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="source_delete",
+            resource_type="source",
+            resource_id=str(source_id),
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @v1.post("/sources/{source_id}/check")
@@ -284,6 +365,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     @v1.post("/destinations", status_code=status.HTTP_201_CREATED)
     def elt_destinations_create(
         body: DestinationCreateBody,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
     ) -> dict[str, Any]:
@@ -296,7 +378,18 @@ def register_elt_routes(v1: APIRouter) -> None:
             config=body.config,
             created_by=user.username,
         )
-        return {"item": public_destination_payload(row)}
+        pl = public_destination_payload(row)
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="destination_create",
+            resource_type="destination",
+            resource_id=str(pl.get("id")),
+            payload={"name": body.name, "connector_code": body.connector_code},
+        )
+        return {"item": pl}
 
     @v1.get("/destinations/{destination_id}")
     def elt_destinations_get(
@@ -315,6 +408,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     def elt_destinations_patch(
         destination_id: int,
         body: DestinationPatchBody,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
     ) -> dict[str, Any]:
@@ -330,11 +424,23 @@ def register_elt_routes(v1: APIRouter) -> None:
         )
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "destination_not_found"})
-        return {"item": public_destination_payload(row)}
+        pl = public_destination_payload(row)
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="destination_update",
+            resource_type="destination",
+            resource_id=str(destination_id),
+            payload={"name": pl.get("name")},
+        )
+        return {"item": pl}
 
     @v1.delete("/destinations/{destination_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
     def elt_destinations_delete(
         destination_id: int,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
@@ -351,6 +457,15 @@ def register_elt_routes(v1: APIRouter) -> None:
             )
         if not delete_destination_row(conn, workspace_id=wid, destination_id=destination_id):
             raise HTTPException(status_code=404, detail={"error_code": "destination_not_found"})
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="destination_delete",
+            resource_type="destination",
+            resource_id=str(destination_id),
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @v1.post("/destinations/{destination_id}/check")
@@ -364,19 +479,62 @@ def register_elt_routes(v1: APIRouter) -> None:
         row = get_destination(conn, workspace_id=wid, destination_id=destination_id)
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "destination_not_found"})
-        cc = str(row["connector_code"]).strip().lower()
-        if cc in ("postgres", "postgresql", "warehouse"):
-            try:
-                eng = create_engine(database_url(), pool_pre_ping=True)
-                with eng.connect() as c:
-                    c.execute(text("SELECT 1"))
-            except Exception as e:
-                touch_destination_checked(conn, workspace_id=wid, destination_id=destination_id)
-                return {"ok": False, "message": str(e), "details": None}
+        cc = str(row["connector_code"]).strip().lower().replace("-", "_")
+        cfg = public_destination_payload(row)["config"]
+        try:
+            cr = destination_check(cc, cfg)
+        except ValueError as e:
             touch_destination_checked(conn, workspace_id=wid, destination_id=destination_id)
-            return {"ok": True, "message": "PostgreSQL доступен", "details": {"dialect": "postgres"}}
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": "unknown_destination", "message": str(e)},
+            ) from e
         touch_destination_checked(conn, workspace_id=wid, destination_id=destination_id)
-        return {"ok": True, "message": f"Коннектор {cc!r}: проверка не реализована (заглушка)", "details": None}
+        return {"ok": cr.ok, "message": cr.message, "details": cr.details}
+
+    @v1.post("/destinations/{destination_id}/write")
+    def elt_destinations_write(
+        destination_id: int,
+        body: DestinationWriteBody,
+        user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
+        conn: Annotated[Connection, Depends(get_conn)],
+    ) -> dict[str, Any]:
+        wid = _wid(conn, user, body.workspace_code)
+        row = get_destination(conn, workspace_id=wid, destination_id=destination_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail={"error_code": "destination_not_found"})
+        cc = str(row["connector_code"]).strip().lower().replace("-", "_")
+        cfg = public_destination_payload(row)["config"]
+        wm = WriteMode(body.mode)
+        try:
+            wr = destination_write(
+                cc,
+                stream_name=body.stream_name,
+                records=body.records,
+                schema=body.stream_schema,
+                mode=wm,
+                config=cfg,
+            )
+        except ValueError as e:
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": "unknown_destination", "message": str(e)},
+            ) from e
+        if not wr.ok:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "error_code": "destination_write_failed",
+                    "message": wr.message,
+                    "details": wr.details,
+                },
+            )
+        return {
+            "ok": True,
+            "message": wr.message,
+            "rows_written": wr.rows_written,
+            "details": wr.details,
+        }
 
     @v1.get("/connections")
     def elt_connections_list(
@@ -390,6 +548,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     @v1.post("/connections", status_code=status.HTTP_201_CREATED)
     def elt_connections_create(
         body: ConnectionCreateBody,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
     ) -> dict[str, Any]:
@@ -409,6 +568,16 @@ def register_elt_routes(v1: APIRouter) -> None:
             )
         except EltRepoError as e:
             raise HTTPException(status_code=422, detail={"error_code": "invalid_connection", "message": str(e)}) from e
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="connection_create",
+            resource_type="connection",
+            resource_id=str(item.get("id")),
+            payload={"name": body.name},
+        )
         return {"item": item}
 
     @v1.get("/connections/{connection_id}")
@@ -428,6 +597,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     def elt_connections_patch(
         connection_id: int,
         body: ConnectionPatchBody,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
     ) -> dict[str, Any]:
@@ -445,11 +615,22 @@ def register_elt_routes(v1: APIRouter) -> None:
         )
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "connection_not_found"})
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="connection_update",
+            resource_type="connection",
+            resource_id=str(connection_id),
+            payload={"status": row.get("status"), "is_active": row.get("is_active")},
+        )
         return {"item": row}
 
     @v1.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
     def elt_connections_delete(
         connection_id: int,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
@@ -457,11 +638,21 @@ def register_elt_routes(v1: APIRouter) -> None:
         wid = _wid(conn, user, workspace_code)
         if not delete_connection_row(conn, workspace_id=wid, connection_id=connection_id):
             raise HTTPException(status_code=404, detail={"error_code": "connection_not_found"})
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="connection_delete",
+            resource_type="connection",
+            resource_id=str(connection_id),
+        )
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     @v1.post("/connections/{connection_id}/trigger", status_code=status.HTTP_202_ACCEPTED)
     def elt_connections_trigger(
         connection_id: int,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
@@ -482,6 +673,7 @@ def register_elt_routes(v1: APIRouter) -> None:
                 connection_id=None,
                 integration_code=None,
                 stream_name=None,
+                workspace_id=wid,
             )
         except SyncRunError as exc:
             raise HTTPException(
@@ -497,6 +689,7 @@ def register_elt_routes(v1: APIRouter) -> None:
             stream_name=stream_name,
             triggered_by=user.username,
             note=None,
+            workspace_id=wid,
         )
         run_id = int(row["id"])
         try:
@@ -509,6 +702,17 @@ def register_elt_routes(v1: APIRouter) -> None:
             row = mark_sync_run_running(conn, run_id=run_id, dagster_run_id=launch.run_id)
         except SyncRunError as exc:
             row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
+            _audit_elt(
+                conn,
+                request,
+                user,
+                workspace_id=wid,
+                action="trigger_sync",
+                resource_type="sync_run",
+                resource_id=str(run_id),
+                result="failure",
+                payload={"connection_id": connection_id, "error": str(exc)},
+            )
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -518,6 +722,21 @@ def register_elt_routes(v1: APIRouter) -> None:
                 },
             ) from exc
 
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="trigger_sync",
+            resource_type="sync_run",
+            resource_id=str(run_id),
+            payload={
+                "connection_id": connection_id,
+                "integration_code": integration_code,
+                "stream_name": stream_name,
+                "dagster_run_id": row.get("dagster_run_id"),
+            },
+        )
         return {
             "status": "accepted",
             "message": "Sync run accepted and launched",
@@ -528,6 +747,7 @@ def register_elt_routes(v1: APIRouter) -> None:
     @v1.post("/connections/{connection_id}/pause")
     def elt_connections_pause(
         connection_id: int,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
@@ -542,11 +762,21 @@ def register_elt_routes(v1: APIRouter) -> None:
         )
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "connection_not_found"})
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="connection_pause",
+            resource_type="connection",
+            resource_id=str(connection_id),
+        )
         return {"item": row}
 
     @v1.post("/connections/{connection_id}/resume")
     def elt_connections_resume(
         connection_id: int,
+        request: Request,
         user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
@@ -561,4 +791,13 @@ def register_elt_routes(v1: APIRouter) -> None:
         )
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "connection_not_found"})
+        _audit_elt(
+            conn,
+            request,
+            user,
+            workspace_id=wid,
+            action="connection_resume",
+            resource_type="connection",
+            resource_id=str(connection_id),
+        )
         return {"item": row}

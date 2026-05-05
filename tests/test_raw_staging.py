@@ -5,7 +5,10 @@ from __future__ import annotations
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
+import pytest
 from datanorma.warehouse.raw_staging import load_raw_to_staging
+
+pytestmark = pytest.mark.unit
 
 
 @patch("datanorma.warehouse.raw_staging.ensure_phase1_schema")

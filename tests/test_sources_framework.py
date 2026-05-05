@@ -12,6 +12,8 @@ from datanorma.sources.builder import RestBuilderSource, load_rest_connector_yam
 from datanorma.sources.registry import create_source
 from datanorma.sources.schema_inference import records_to_json_schema, value_to_json_schema
 
+pytestmark = pytest.mark.unit
+
 
 def test_value_to_json_schema_object() -> None:
     s = value_to_json_schema({"a": 1, "b": "x"})

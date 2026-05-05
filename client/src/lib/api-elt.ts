@@ -7,6 +7,7 @@ import type {
   EltConnectionCreatePayload,
   EltConnectionDetailDto,
   EltConnectionTriggerResponseDto,
+  EltDestinationCreatePayload,
   EltDestinationItemDto,
   EltDiscoverResponseDto,
   EltSourceItemDto,
@@ -62,6 +63,31 @@ export function postEltDestinationCheck(destinationId: number, workspaceCode = "
     {},
     init,
   );
+}
+
+export function createEltDestination(body: EltDestinationCreatePayload, init?: ApiRequestInit) {
+  return apiPostJson<{ item: EltDestinationItemDto }, EltDestinationCreatePayload>(
+    "/api/v1/destinations",
+    body,
+    init,
+  );
+}
+
+export function postEltDestinationWrite(
+  destinationId: number,
+  body: {
+    workspace_code: string;
+    stream_name: string;
+    records: Record<string, unknown>[];
+    schema?: Record<string, unknown>;
+    mode: "append" | "full_refresh" | "upsert" | "replace_table";
+  },
+  init?: ApiRequestInit,
+) {
+  return apiPostJson<
+    { ok: boolean; message: string; rows_written: number; details?: Record<string, unknown> },
+    typeof body
+  >(`/api/v1/destinations/${destinationId}/write`, body, init);
 }
 
 export function createEltConnection(body: EltConnectionCreatePayload, init?: ApiRequestInit) {

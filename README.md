@@ -56,6 +56,7 @@ DataNorma - сервис интеграции и нормализации дан
 
 - `assets/` - Dagster assets по этапам конвейера.
 - `sources/` - коннекторы и source factory (`check/discover/read`).
+- `destinations/` - приёмники (`check`/`write`, PostgreSQL, CSV/XLSX, ClickHouse HTTP).
 - `normalization/` - mapping, fuzzy, даты/валюта/units, typing.
 - `warehouse/` - запись в staging и warehouse, sync state.
 - `web/` - FastAPI API + Jinja2 UI + auth/RBAC/static/templates.

@@ -30,7 +30,7 @@ export type Run = {
   connectionId: string;
   connectionName: string;
   status: Status;
-  stage: "extract" | "staging" | "normalize" | "validate" | "load" | "complete";
+  stage: "extract" | "staging_raw" | "normalize" | "dbt_run" | "validate" | "complete";
   startedAt: string;
   duration: string;
   records: number;
@@ -47,7 +47,7 @@ export type Issue = {
   field: string;
   original: string;
   suggested: string;
-  status: "open" | "resolved";
+  status: "open" | "resolved" | "ignored";
 };
 
 export type MappingRow = {
@@ -85,6 +85,7 @@ export type Destination = {
   id: string;
   name: string;
   type: string;
+  connectorCode?: string;
   status: "ok" | "warning" | "error";
   schemaOrDb: string;
   lastUsed: string;
@@ -111,20 +112,33 @@ export type ActivityEvent = {
   detail: string;
 };
 
-export type CanonicalField = {
+export type DbtColumn = {
   name: string;
-  type: string;
-  required: boolean;
-  description: string;
-  aliases: string;
-  rule: string;
-  example: string;
+  dataType: string;
+  description?: string;
+  isPrimaryKey?: boolean;
 };
 
-export type CanonicalEntity = {
+export type DbtModel = {
   id: string;
-  nameRu: string;
-  fields: CanonicalField[];
+  name: string;
+  schema: "semantic" | "normalized" | "raw";
+  description?: string;
+  columns: DbtColumn[];
+  sources: string[];
+  materializedAs: "table" | "view" | "incremental";
+};
+
+export type StreamField = {
+  name: string;
+  dataType: string;
+  nullable: boolean;
+  description?: string;
+};
+
+export type StreamSchema = {
+  streamName: string;
+  fields: StreamField[];
 };
 
 export type AppUser = {

@@ -3,14 +3,38 @@
  * UI-модели — в types.ts; маппинг — в api-datanorma.ts.
  */
 
+export type WorkspaceRefDto = {
+  id: number;
+  code: string;
+  name: string;
+};
+
 export type MeDto = {
   username: string;
   roles: string[];
+  user_id?: number | null;
+  workspaces: WorkspaceRefDto[];
+  active_workspace_id: number | null;
 };
 
 export type LoginResponseDto = {
   access_token: string;
   token_type: string;
+};
+
+export type AuditLogRowDto = {
+  id: number;
+  workspace_id: number | null;
+  actor_user_id: number | null;
+  actor_username: string | null;
+  action: string;
+  resource_type: string | null;
+  resource_id: string | null;
+  result: string;
+  payload_json: Record<string, unknown> | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  created_at: string | null;
 };
 
 export type V1ConnectionItem = {
@@ -26,6 +50,7 @@ export type V1ConnectionItem = {
 
 export type V1SyncRunItem = {
   id: number;
+  workspace_id?: number | null;
   connection_id: number | null;
   integration_code: string;
   stream_name: string;
@@ -37,6 +62,18 @@ export type V1SyncRunItem = {
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+  load_destination?: { connector_code: string; name: string };
+};
+
+export type V1SyncRunLogItem = {
+  id: number;
+  sync_run_id: number;
+  stage: "extract" | "staging_raw" | "normalize" | "dbt_run" | "validate" | "complete";
+  level: "debug" | "info" | "warning" | "error";
+  message: string;
+  technical_details?: Record<string, unknown> | null;
+  record_ref?: string | null;
+  created_at?: string | null;
 };
 
 export type SalesSummaryDto = {
@@ -59,6 +96,10 @@ export type NormIssueRowDto = {
   field_name: string | null;
   issue_type: string;
   message: string | null;
+  status?: "open" | "resolved" | "ignored";
+  resolved_at?: string | null;
+  resolution_note?: string | null;
+  resolved_by?: string | null;
   created_at: string | null;
 };
 
@@ -82,10 +123,41 @@ export type DimSourceRowDto = {
   description: string | null;
 };
 
+export type DbtModelColumnDto = {
+  name: string;
+  dataType: string;
+  description?: string;
+  isPrimaryKey?: boolean;
+};
+
+/** GET /api/v1/dbt/models */
+export type DbtModelItemDto = {
+  name: string;
+  schema: string;
+  materialized_as: string;
+  sources: string[];
+  domain: string;
+  path: string;
+  description?: string;
+  columns: DbtModelColumnDto[];
+};
+
+export type DbtModelsResponseDto = {
+  items: DbtModelItemDto[];
+  source?: "manifest" | "sql";
+};
+
+export type DbtModelPreviewResponseDto = {
+  model_name: string;
+  schema: string;
+  rows: Record<string, unknown>[];
+};
+
 export type DestinationCatalogItemDto = {
   id: string;
   name: string;
   type: string;
+  connector_code?: string;
   status: "ok" | "warning" | "error";
   schema_or_db: string;
   last_used_label: string;
@@ -117,6 +189,13 @@ export type EltDestinationItemDto = {
   created_at?: string | null;
   updated_at?: string | null;
   last_checked_at?: string | null;
+};
+
+export type EltDestinationCreatePayload = {
+  workspace_code: string;
+  name: string;
+  connector_code: string;
+  config: Record<string, unknown>;
 };
 
 export type EltCheckResponseDto = {

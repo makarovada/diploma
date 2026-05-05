@@ -2,11 +2,20 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from datanorma.web import api_elt as elt_mod
 from datanorma.web.deps import AuthUser, get_conn, get_current_user
 from datanorma.web.main import create_app
+
+pytestmark = pytest.mark.integration
+
+
+@pytest.fixture(autouse=True)
+def _stub_audit_writes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Аудит пишет отдельным engine; при MagicMock-conn тесты не поднимают таблицу audit_log."""
+    monkeypatch.setattr(elt_mod, "record_audit_event", lambda *_a, **_k: None)
 
 
 def _client() -> TestClient:
@@ -57,21 +66,13 @@ def test_elt_destinations_check_postgres_stub(monkeypatch) -> None:
             lambda *_a, **_k: {"id": 3, "connector_code": "postgres", "config_encrypted": "{}"},
         )
         monkeypatch.setattr(elt_mod, "touch_destination_checked", lambda *_a, **_k: None)
+        from datanorma.destinations.base import DestinationCheckResult
 
-        class _Eng:
-            def connect(self):
-                return self
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *exc):
-                return False
-
-            def execute(self, *_a, **_k):
-                return None
-
-        monkeypatch.setattr(elt_mod, "create_engine", lambda *_a, **_k: _Eng())
+        monkeypatch.setattr(
+            elt_mod,
+            "destination_check",
+            lambda *_a, **_k: DestinationCheckResult(ok=True, message="ok", details={}),
+        )
         r = client.post("/api/v1/destinations/3/check")
         assert r.status_code == 200
         body = r.json()

@@ -2,9 +2,9 @@ import type {
   ActivityEvent,
   AppUser,
   AuditEntry,
-  CanonicalEntity,
   Connection,
   ConnectorCatalogItem,
+  DbtModel,
   Destination,
   Issue,
   MappingRow,
@@ -33,7 +33,7 @@ export const connections: Connection[] = [
 export const runs: Run[] = [
   { id: "run-901", connectionId: "conn-1", connectionName: "Ozon -> PostgreSQL: заказы", status: "running", stage: "normalize", startedAt: "19:41", duration: "00:02:14", records: 9342, issues: 22, triggeredBy: "Мария Иванова" },
   { id: "run-900", connectionId: "conn-2", connectionName: "1С -> ClickHouse: продажи", status: "success", stage: "complete", startedAt: "18:58", duration: "00:06:39", records: 8103, issues: 0, triggeredBy: "Расписание" },
-  { id: "run-899", connectionId: "conn-3", connectionName: "Wildberries -> CSV: остатки", status: "failed", stage: "load", startedAt: "18:11", duration: "00:03:01", records: 2201, issues: 12, triggeredBy: "Иван Петров" },
+  { id: "run-899", connectionId: "conn-3", connectionName: "Wildberries -> CSV: остатки", status: "failed", stage: "validate", startedAt: "18:11", duration: "00:03:01", records: 2201, issues: 12, triggeredBy: "Иван Петров" },
 ];
 
 export const issues: Issue[] = [
@@ -50,10 +50,46 @@ export const mappingRows: MappingRow[] = [
 ];
 
 export const normalizationRules: NormalizationRule[] = [
-  { id: "rule-date", title: "Даты и время", enabled: true, fixedCount: 11200, issuesCount: 8, description: "Преобразование к ISO 8601 и UTC" },
-  { id: "rule-currency", title: "Валюты", enabled: true, fixedCount: 4300, issuesCount: 3, description: "RUB/USD/EUR, округление до 2 знаков" },
-  { id: "rule-fio", title: "ФИО", enabled: true, fixedCount: 2100, issuesCount: 11, description: "Нормализация регистра и разбор полного имени" },
-  { id: "rule-dedup", title: "Дедупликация", enabled: false, fixedCount: 0, issuesCount: 29, description: "Поиск дублей по телефону и email" },
+  {
+    id: "rule-date",
+    title: "Даты и время",
+    enabled: true,
+    fixedCount: 11200,
+    issuesCount: 8,
+    description: "Структурный слой: разбор форматов и приведение к ISO 8601 / UTC (без бизнес-смысла «канонического заказа»).",
+  },
+  {
+    id: "rule-phone",
+    title: "Телефоны",
+    enabled: true,
+    fixedCount: 6400,
+    issuesCount: 22,
+    description: "Приведение к E.164 там, где возможно однозначно (РФ: 8→+7).",
+  },
+  {
+    id: "rule-email",
+    title: "Email",
+    enabled: true,
+    fixedCount: 3100,
+    issuesCount: 5,
+    description: "trim + lower case; проверка базовой формы адреса.",
+  },
+  {
+    id: "rule-inn",
+    title: "ИНН / КПП",
+    enabled: true,
+    fixedCount: 900,
+    issuesCount: 14,
+    description: "Только цифры; длина 10 (ЮЛ) или 12 (ИП); иначе проблемная запись.",
+  },
+  {
+    id: "rule-currency",
+    title: "Валюты и десятичные",
+    enabled: true,
+    fixedCount: 4300,
+    issuesCount: 3,
+    description: "Нормализация кодов валют и масштаба (2 знака) в типизированном слое.",
+  },
 ];
 
 export const runLogs = [
@@ -110,31 +146,38 @@ export const connectorsCatalog: ConnectorCatalogItem[] = [
   { id: "rest-builder", name: "REST API Builder", category: "API", region: "intl", role: "source", preview: true, description: "Универсальный источник по OpenAPI/REST.", streams: ["custom"], auth: "token / OAuth" },
 ];
 
-export const canonicalEntities: CanonicalEntity[] = [
+export const dbtModels: DbtModel[] = [
   {
-    id: "customer",
-    nameRu: "Клиент",
-    fields: [
-      { name: "customer.id", type: "uuid", required: true, description: "Внутренний идентификатор", aliases: "client_id, buyer_id", rule: "trim, lower", example: "a1b2c3d4-…" },
-      { name: "customer.phone", type: "phone_e164", required: false, description: "Телефон E.164", aliases: "tel, mobile", rule: "normalize_phone", example: "+79125557788" },
-      { name: "customer.email", type: "email", required: false, description: "Email", aliases: "mail", rule: "lowercase", example: "user@company.ru" },
+    id: "model-visits",
+    name: "yandex_metrika_visits",
+    schema: "semantic",
+    description: "Визиты из Яндекс Метрики с UTM-разметкой и источниками трафика.",
+    sources: ["normalized.yandex_metrika__visits"],
+    materializedAs: "table",
+    columns: [
+      { name: "visit_id", dataType: "text", isPrimaryKey: true },
+      { name: "visit_datetime", dataType: "timestamptz" },
+      { name: "utm_source", dataType: "text" },
+      { name: "utm_medium", dataType: "text" },
+      { name: "utm_campaign", dataType: "text" },
+      { name: "device", dataType: "text" },
+      { name: "region", dataType: "text" },
+      { name: "goal_count", dataType: "integer" },
     ],
   },
   {
-    id: "order",
-    nameRu: "Заказ",
-    fields: [
-      { name: "order.external_id", type: "string", required: true, description: "ID заказа во внешней системе", aliases: "order_id, Номер", rule: "trim", example: "OZ-100992" },
-      { name: "order.total_amount", type: "decimal", required: true, description: "Сумма в базовой валюте", aliases: "sum, total", rule: "currency + scale 2", example: "12800.00" },
-      { name: "order.status", type: "enum", required: true, description: "Статус в канонической модели", aliases: "state", rule: "status_map", example: "delivered" },
-    ],
-  },
-  {
-    id: "product",
-    nameRu: "Товар",
-    fields: [
-      { name: "product.sku", type: "string", required: true, description: "Артикул", aliases: "offer_id", rule: "trim", example: "SKU-7781" },
-      { name: "product.name", type: "string", required: true, description: "Наименование", aliases: "title", rule: "title_case", example: "Кроссовки" },
+    id: "model-goals",
+    name: "yandex_metrika_goal_reaches",
+    schema: "semantic",
+    description: "Достижения целей Яндекс Метрики с выручкой и валютой.",
+    sources: ["normalized.yandex_metrika__goals_reaches"],
+    materializedAs: "table",
+    columns: [
+      { name: "goal_id", dataType: "text", isPrimaryKey: true },
+      { name: "goal_name", dataType: "text" },
+      { name: "reached_at", dataType: "timestamptz" },
+      { name: "revenue", dataType: "numeric" },
+      { name: "currency", dataType: "text" },
     ],
   },
 ];
@@ -170,7 +213,7 @@ export const workspaceList = [
 
 export const dictionarySummary = [
   { id: "dict-currency", name: "Валюты (ISO 4217)", rows: 12, updatedAt: "2026-04-01" },
-  { id: "dict-status-order", name: "Статусы заказа (канон)", rows: 18, updatedAt: "2026-03-15" },
+  { id: "dict-status-order", name: "Статусы заказа (справочник)", rows: 18, updatedAt: "2026-03-15" },
   { id: "dict-phone-region", name: "Коды регионов телефонов РФ", rows: 90, updatedAt: "2026-01-10" },
 ];
 

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import hashlib
 
+import pytest
 from datanorma.web.passwords import hash_password, is_legacy_sha256_hash, verify_password
+
+pytestmark = pytest.mark.unit
 
 
 def test_bcrypt_round_trip() -> None:

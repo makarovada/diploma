@@ -188,15 +188,17 @@ def create_sync_run(
     triggered_by: str,
     note: str | None = None,
     domain_connection_id: int | None = None,
+    workspace_id: int | None = None,
 ) -> dict[str, Any]:
     row = conn.execute(
         text(
-            "INSERT INTO sync_run (connection_id, domain_connection_id, integration_code, stream_name, status, triggered_by, meta, created_at, updated_at) "
-            "VALUES (:cid, :dcid, :ic, :sn, 'queued', :tb, CAST(:meta AS jsonb), NOW(), NOW()) "
-            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "INSERT INTO sync_run (workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, triggered_by, meta, created_at, updated_at) "
+            "VALUES (:wid, :cid, :dcid, :ic, :sn, 'queued', :tb, CAST(:meta AS jsonb), NOW(), NOW()) "
+            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {
+            "wid": workspace_id,
             "cid": connection_id,
             "dcid": domain_connection_id,
             "ic": integration_code,
@@ -213,7 +215,7 @@ def mark_sync_run_running(conn: Connection, run_id: int, dagster_run_id: str) ->
         text(
             "UPDATE sync_run SET status = 'running', dagster_run_id = :drid, started_at = COALESCE(started_at, NOW()), "
             "updated_at = NOW(), error_message = NULL WHERE id = :id "
-            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {"id": run_id, "drid": dagster_run_id},
@@ -226,7 +228,7 @@ def mark_sync_run_failed(conn: Connection, run_id: int, message: str) -> dict[st
         text(
             "UPDATE sync_run SET status = 'failed', finished_at = COALESCE(finished_at, NOW()), "
             "updated_at = NOW(), error_message = :msg WHERE id = :id "
-            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {"id": run_id, "msg": message[:3000]},
@@ -241,9 +243,11 @@ def resolve_connection(
     connection_id: int | None = None,
     integration_code: str | None = None,
     stream_name: str | None = None,
+    workspace_id: int | None = None,
 ) -> tuple[int | None, int | None, str | None, str | None]:
     """sync_state.id, domain connection.id, integration_code, stream_name."""
     if domain_connection_id is not None:
+        ws_clause = " AND c.workspace_id = :wid" if workspace_id is not None else ""
         row = conn.execute(
             text(
                 "SELECT ss.id AS sync_id, s.connector_code AS ic, cs.stream_name AS sn, c.id AS dcid "
@@ -252,10 +256,11 @@ def resolve_connection(
                 "JOIN connection_stream cs ON cs.connection_id = c.id "
                 "LEFT JOIN sync_state ss ON ss.connection_stream_id = cs.id "
                 "WHERE c.id = :cid AND cs.is_enabled IS TRUE "
+                f"{ws_clause} "
                 "ORDER BY cs.stream_name "
                 "LIMIT 1"
             ),
-            {"cid": domain_connection_id},
+            {"cid": domain_connection_id, "wid": workspace_id},
         ).mappings().first()
         if row is None:
             raise SyncRunError("domain connection has no enabled streams")
@@ -265,14 +270,16 @@ def resolve_connection(
         return int(sid), int(row["dcid"]), str(row["ic"]), str(row["sn"])
 
     if connection_id is not None:
+        ws_clause = " AND ss.workspace_id = :wid" if workspace_id is not None else ""
         row = conn.execute(
             text(
                 "SELECT ss.id, ss.integration_code, ss.stream_name, cs.connection_id AS domain_cid "
                 "FROM sync_state ss "
                 "LEFT JOIN connection_stream cs ON cs.id = ss.connection_stream_id "
                 "WHERE ss.id = :id"
+                f"{ws_clause}"
             ),
-            {"id": connection_id},
+            {"id": connection_id, "wid": workspace_id},
         ).mappings().first()
         if row is None:
             raise SyncRunError("connection_id not found")
@@ -284,14 +291,16 @@ def resolve_connection(
             str(row["stream_name"]),
         )
     if integration_code and stream_name:
+        ws_clause = " AND ss.workspace_id = :wid" if workspace_id is not None else ""
         row = conn.execute(
             text(
                 "SELECT ss.id, ss.integration_code, ss.stream_name, cs.connection_id AS domain_cid "
                 "FROM sync_state ss "
                 "LEFT JOIN connection_stream cs ON cs.id = ss.connection_stream_id "
                 "WHERE ss.integration_code = :ic AND ss.stream_name = :sn"
+                f"{ws_clause}"
             ),
-            {"ic": integration_code, "sn": stream_name},
+            {"ic": integration_code, "sn": stream_name, "wid": workspace_id},
         ).mappings().first()
         if row is None:
             raise SyncRunError("connection not found by integration_code/stream_name")
@@ -305,27 +314,54 @@ def resolve_connection(
     return None, None, integration_code, stream_name
 
 
-def list_sync_runs(conn: Connection, limit: int = 50) -> list[dict[str, Any]]:
+def attach_load_destination(conn: Connection, row: dict[str, Any]) -> dict[str, Any]:
+    """Добавляет в ответ sync_run сведения о приёмнике (через domain connection)."""
+    out = dict(row)
+    dcid = out.get("domain_connection_id")
+    if dcid is None:
+        return out
+    r = conn.execute(
+        text(
+            "SELECT d.connector_code, d.name "
+            "FROM connection c JOIN destination d ON d.id = c.destination_id "
+            "WHERE c.id = :cid"
+        ),
+        {"cid": int(dcid)},
+    ).mappings().first()
+    if r:
+        out["load_destination"] = {
+            "connector_code": str(r["connector_code"]),
+            "name": str(r["name"]),
+        }
+    return out
+
+
+def list_sync_runs(conn: Connection, limit: int = 50, workspace_id: int | None = None) -> list[dict[str, Any]]:
     lim = max(1, min(limit, 500))
+    ws_clause = "WHERE workspace_id = :wid " if workspace_id is not None else ""
     rows = conn.execute(
         text(
-            "SELECT id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "SELECT id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at "
-            "FROM sync_run ORDER BY id DESC LIMIT :lim"
+            "FROM sync_run "
+            f"{ws_clause}"
+            "ORDER BY id DESC LIMIT :lim"
         ),
-        {"lim": lim},
+        {"lim": lim, "wid": workspace_id},
     ).mappings().all()
     return [dict(r) for r in rows]
 
 
-def get_sync_run(conn: Connection, run_id: int) -> dict[str, Any] | None:
+def get_sync_run(conn: Connection, run_id: int, workspace_id: int | None = None) -> dict[str, Any] | None:
+    ws_clause = " AND workspace_id = :wid" if workspace_id is not None else ""
     row = conn.execute(
         text(
-            "SELECT id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "SELECT id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at "
             "FROM sync_run WHERE id = :id"
+            f"{ws_clause}"
         ),
-        {"id": run_id},
+        {"id": run_id, "wid": workspace_id},
     ).mappings().first()
     return dict(row) if row else None
 
@@ -347,7 +383,7 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
             text(
                 "UPDATE sync_run SET status = :st, finished_at = COALESCE(:fa, finished_at, NOW()), "
                 "updated_at = NOW() WHERE id = :id "
-                "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+                "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
                 "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
             ),
             {"id": run["id"], "st": status, "fa": finished_at},
@@ -356,7 +392,7 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
     row = conn.execute(
         text(
             "UPDATE sync_run SET status = :st, updated_at = NOW() WHERE id = :id "
-            "RETURNING id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
+            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
             "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
         ),
         {"id": run["id"], "st": status},
@@ -364,6 +400,6 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
     return dict(row)
 
 
-def refresh_recent_sync_runs(conn: Connection, limit: int = 50) -> list[dict[str, Any]]:
-    runs = list_sync_runs(conn, limit=limit)
+def refresh_recent_sync_runs(conn: Connection, limit: int = 50, workspace_id: int | None = None) -> list[dict[str, Any]]:
+    runs = list_sync_runs(conn, limit=limit, workspace_id=workspace_id)
     return [refresh_sync_run_status(conn, r) for r in runs]

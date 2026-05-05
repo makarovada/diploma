@@ -2,15 +2,31 @@
 
 from __future__ import annotations
 
+import json
+import re
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import SQLAlchemyError
 
+from datanorma.config import get_settings
 from datanorma.web.config import dagster_console_url
-from datanorma.web.deps import AuthUser, get_conn, get_current_user, require_operation
+from datanorma.web.audit_repo import list_audit_log, record_audit_event
+from datanorma.web.deps import (
+    AuthUser,
+    get_conn,
+    get_current_user,
+    get_engine_cached,
+    require_operation,
+    require_request_workspace_id,
+    resolve_actor_user_id,
+    resolve_effective_workspace_id,
+)
+from datanorma.web.request_audit import client_ip, client_user_agent
 from datanorma.web.jwt_util import create_access_token
 from datanorma.web.mapping_profiles import (
     MappingProfileError,
@@ -23,9 +39,10 @@ from datanorma.web.mapping_profiles import (
     rollback_to_version,
 )
 from datanorma.web.passwords import hash_password, is_legacy_sha256_hash, verify_password
-from datanorma.web.rbac_matrix import matrix_payload
+from datanorma.web.rbac_matrix import ROLE_PLATFORM_ADMIN, matrix_payload
 from datanorma.web.sync_runs import (
     SyncRunError,
+    attach_load_destination,
     create_sync_run,
     get_sync_run,
     launch_dagster_run,
@@ -36,16 +53,206 @@ from datanorma.web.sync_runs import (
     resolve_connection,
 )
 from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
-from datanorma.web.api_elt import register_elt_routes
+from datanorma.web.api_elt import get_elt_workspace_id, register_elt_routes
+from datanorma.web.elt_repo import list_destinations, public_destination_payload
 from datanorma.web.users_repo import (
+    list_all_workspace_ids,
     list_roles,
     list_users_with_roles,
     load_user_by_username,
+    load_user_workspaces,
+    load_workspaces_visible,
     update_user_password_hash,
 )
 
 router = APIRouter(tags=["api"])
 v1 = APIRouter(prefix="/v1", tags=["api-v1"])
+
+
+def _audit_api(
+    conn: Connection,
+    request: Request | None,
+    user: AuthUser,
+    *,
+    workspace_id: int | None,
+    action: str,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    result: str = "success",
+    payload: dict[str, Any] | None = None,
+) -> None:
+    record_audit_event(
+        get_engine_cached(),
+        workspace_id=workspace_id,
+        actor_user_id=resolve_actor_user_id(conn, user),
+        action=action,
+        resource_type=resource_type,
+        resource_id=resource_id,
+        result=result,
+        payload=payload,
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
+
+
+def _mapping_profile_workspace_id(conn: Connection, profile_id: int) -> int | None:
+    row = conn.execute(
+        text("SELECT workspace_id FROM mapping_profile WHERE id = :id"),
+        {"id": profile_id},
+    ).scalar()
+    return int(row) if row is not None else None
+
+
+_DBT_CONFIG_SCHEMA_RE = re.compile(r"schema\s*=\s*['\"]([a-zA-Z_][\w]*)['\"]", re.IGNORECASE)
+_DBT_CONFIG_MATERIALIZED_RE = re.compile(r"materialized\s*=\s*['\"]([a-zA-Z_][\w]*)['\"]", re.IGNORECASE)
+_DBT_SOURCE_RE = re.compile(r"source\(\s*['\"]([^'\"]+)['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)", re.IGNORECASE)
+_SAFE_IDENT_RE = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _dbt_models_dir() -> Path:
+    return get_settings().resolved_repo_root() / "dbt" / "models"
+
+
+def _dbt_manifest_path() -> Path:
+    return get_settings().resolved_repo_root() / "dbt" / "target" / "manifest.json"
+
+
+def _parse_sql_select_columns(sql_text: str) -> list[dict[str, Any]]:
+    """Извлечь имена колонок из верхнего SELECT … FROM (без подзапросов в типовых dbt-моделях)."""
+    m = re.search(r"(?is)\bselect\b\s*(.+?)\s*\bfrom\b", sql_text)
+    if not m:
+        return []
+    block = m.group(1)
+    cols: list[dict[str, Any]] = []
+    for mm in re.finditer(r"\bAS\s+([a-zA-Z_][a-zA-Z0-9_]*)\b", block):
+        cols.append(
+            {
+                "name": mm.group(1),
+                "dataType": "unknown",
+                "description": "",
+                "isPrimaryKey": False,
+            }
+        )
+    return cols
+
+
+def _models_from_manifest() -> list[dict[str, Any]] | None:
+    p = _dbt_manifest_path()
+    if not p.is_file():
+        return None
+    try:
+        manifest = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    repo_root = get_settings().resolved_repo_root()
+    items: list[dict[str, Any]] = []
+    for _uid, node in manifest.get("nodes", {}).items():
+        if not isinstance(node, dict) or node.get("resource_type") != "model":
+            continue
+        name = str(node.get("name") or "").strip()
+        if not name:
+            continue
+        schema = str(node.get("schema") or "semantic")
+        description = str(node.get("description") or "").strip()
+        cfg = node.get("config") if isinstance(node.get("config"), dict) else {}
+        materialized_as = str((cfg or {}).get("materialized") or "table")
+        ofp = str(node.get("original_file_path") or "").replace("\\", "/")
+        domain = "other"
+        if "models/" in ofp:
+            tail = ofp.split("models/", 1)[1]
+            segs = tail.split("/")
+            if len(segs) > 1:
+                domain = segs[0]
+        columns: list[dict[str, Any]] = []
+        raw_cols = node.get("columns")
+        if isinstance(raw_cols, dict):
+            for col_name, col in raw_cols.items():
+                if not isinstance(col, dict):
+                    continue
+                meta = col.get("meta") if isinstance(col.get("meta"), dict) else {}
+                columns.append(
+                    {
+                        "name": str(col.get("name") or col_name),
+                        "dataType": str(col.get("data_type") or "unknown"),
+                        "description": str(col.get("description") or ""),
+                        "isPrimaryKey": bool((meta or {}).get("primary_key")),
+                    }
+                )
+        sources: list[str] = []
+        depends = node.get("depends_on")
+        if isinstance(depends, dict):
+            for dep in depends.get("nodes") or []:
+                if not isinstance(dep, str) or not dep.startswith("source."):
+                    continue
+                parts = dep.split(".")
+                if len(parts) >= 4:
+                    sources.append(f"{parts[-2]}.{parts[-1]}")
+        rel_path = ofp
+        if ofp:
+            try:
+                candidate = repo_root / ofp
+                if candidate.is_file():
+                    rel_path = str(candidate.relative_to(repo_root)).replace("\\", "/")
+            except ValueError:
+                rel_path = ofp
+        items.append(
+            {
+                "name": name,
+                "schema": schema,
+                "materialized_as": materialized_as,
+                "sources": sources,
+                "domain": domain,
+                "path": rel_path,
+                "description": description,
+                "columns": columns,
+            }
+        )
+    items.sort(key=lambda x: (x["domain"], x["name"]))
+    return items
+
+
+def _models_from_sql_scan() -> list[dict[str, Any]]:
+    models_dir = _dbt_models_dir()
+    if not models_dir.is_dir():
+        return []
+    repo_root = get_settings().resolved_repo_root()
+    items: list[dict[str, Any]] = []
+    for path in sorted(models_dir.rglob("*.sql")):
+        sql_text = path.read_text(encoding="utf-8")
+        schema, materialized_as, sources = _parse_dbt_model_sql(sql_text)
+        name = path.stem
+        items.append(
+            {
+                "name": name,
+                "schema": schema,
+                "materialized_as": materialized_as,
+                "sources": sources,
+                "domain": path.parent.name,
+                "path": str(path.relative_to(repo_root)).replace("\\", "/"),
+                "description": "",
+                "columns": _parse_sql_select_columns(sql_text),
+            }
+        )
+    return items
+
+
+def _parse_dbt_model_sql(sql_text: str) -> tuple[str, str, list[str]]:
+    schema = "semantic"
+    materialized_as = "table"
+    schema_match = _DBT_CONFIG_SCHEMA_RE.search(sql_text)
+    if schema_match:
+        schema = schema_match.group(1)
+    materialized_match = _DBT_CONFIG_MATERIALIZED_RE.search(sql_text)
+    if materialized_match:
+        materialized_as = materialized_match.group(1)
+    sources = [f"{sm.group(1)}.{sm.group(2)}" for sm in _DBT_SOURCE_RE.finditer(sql_text)]
+    return schema, materialized_as, sources
+
+
+def _safe_ident(value: str, field: str) -> str:
+    if not _SAFE_IDENT_RE.match(value):
+        raise HTTPException(status_code=422, detail={"error_code": "invalid_identifier", "field": field})
+    return value
 
 
 class LoginBody(BaseModel):
@@ -54,19 +261,91 @@ class LoginBody(BaseModel):
 
 
 @router.post("/auth/login")
-def auth_login(body: LoginBody, conn: Annotated[Connection, Depends(get_conn)]) -> dict[str, str]:
+def auth_login(
+    body: LoginBody,
+    request: Request,
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, str]:
+    eng = get_engine_cached()
+    ip = client_ip(request)
+    ua = client_user_agent(request)
     user = load_user_by_username(conn, body.username)
     if user is None or not verify_password(body.password, user.password_hash):
+        record_audit_event(
+            eng,
+            workspace_id=None,
+            actor_user_id=user.id if user else None,
+            action="login_failure",
+            resource_type="auth",
+            resource_id=body.username.strip()[:128],
+            result="failure",
+            payload={"reason": "invalid_credentials"},
+            ip_address=ip,
+            user_agent=ua,
+        )
         raise HTTPException(status_code=401, detail="Неверный логин или пароль")
     if is_legacy_sha256_hash(user.password_hash):
         update_user_password_hash(conn, user.id, hash_password(body.password))
-    token = create_access_token(username=user.username, roles=user.roles)
+    member_ws = load_user_workspaces(conn, user.id)
+    if ROLE_PLATFORM_ADMIN in user.roles:
+        allowed_ids = list_all_workspace_ids(conn) or [w["id"] for w in member_ws]
+    else:
+        allowed_ids = [w["id"] for w in member_ws]
+    if not allowed_ids:
+        record_audit_event(
+            eng,
+            workspace_id=None,
+            actor_user_id=user.id,
+            action="login_denied_no_workspace",
+            resource_type="auth",
+            resource_id=user.username,
+            result="failure",
+            payload={"reason": "no_workspace"},
+            ip_address=ip,
+            user_agent=ua,
+        )
+        raise HTTPException(status_code=403, detail="Нет доступных workspace для пользователя")
+    active_wid = allowed_ids[0]
+    token = create_access_token(
+        username=user.username,
+        roles=user.roles,
+        user_id=user.id,
+        active_workspace_id=active_wid,
+        allowed_workspace_ids=allowed_ids,
+    )
+    record_audit_event(
+        eng,
+        workspace_id=active_wid,
+        actor_user_id=user.id,
+        action="login_success",
+        resource_type="auth",
+        resource_id=user.username,
+        result="success",
+        payload={"active_workspace_id": active_wid},
+        ip_address=ip,
+        user_agent=ua,
+    )
     return {"access_token": token, "token_type": "bearer"}
 
 
 @router.get("/auth/me")
-def auth_me(user: Annotated[AuthUser, Depends(get_current_user)]) -> dict[str, Any]:
-    return {"username": user.username, "roles": sorted(user.roles)}
+def auth_me(
+    user: Annotated[AuthUser, Depends(get_current_user)],
+    conn: Annotated[Connection, Depends(get_conn)],
+    x_workspace_id: Annotated[str | None, Header(alias="X-Workspace-Id")] = None,
+) -> dict[str, Any]:
+    workspaces = load_workspaces_visible(conn, user.username, user.roles)
+    try:
+        active = resolve_effective_workspace_id(conn, user, x_workspace_id)
+    except HTTPException:
+        active = workspaces[0]["id"] if workspaces else None
+    return {
+        "username": user.username,
+        "roles": sorted(user.roles),
+        "user_id": user.user_id,
+        "workspaces": workspaces,
+        "active_workspace_id": active,
+    }
 
 
 @router.get("/rbac/matrix")
@@ -130,10 +409,11 @@ def data_staging_counts(
 
 @router.get("/data/destinations-catalog")
 def data_destinations_catalog(
-    _: Annotated[AuthUser, Depends(require_operation("view_destinations_page"))],
+    user: Annotated[AuthUser, Depends(require_operation("view_destinations_page"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_code: str = "main",
 ) -> dict[str, Any]:
-    """Каталог приёмников для React SPA (аналог данных на Jinja /app/destinations)."""
+    """Каталог приёмников для React SPA: витрина + записи ELT destination."""
     t = warehouse_table_sql()
     n_rows = int(conn.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar_one())
     sync_n = int(conn.execute(text("SELECT COUNT(*) FROM sync_state")).scalar_one())
@@ -144,51 +424,102 @@ def data_destinations_catalog(
 
     items: list[dict[str, Any]] = [
         {
-            "id": "postgres",
+            "id": "legacy-postgres",
             "name": "PostgreSQL (warehouse)",
             "type": "PostgreSQL",
+            "connector_code": "postgres",
             "status": "ok",
             "schema_or_db": f"warehouse / {t}",
             "last_used_label": last_label,
             "connection_count": sync_n,
         },
         {
-            "id": "csv",
+            "id": "legacy-csv",
             "name": "CSV file",
             "type": "CSV",
+            "connector_code": "csv",
             "status": "ok",
             "schema_or_db": "экспорт /api/data/export-sales-csv",
             "last_used_label": "—",
             "connection_count": 0,
         },
         {
-            "id": "xlsx",
+            "id": "legacy-xlsx",
             "name": "Excel (.xlsx)",
             "type": "XLSX",
+            "connector_code": "xlsx",
             "status": "ok",
             "schema_or_db": "файл (Jinja /app/warehouse)",
             "last_used_label": "—",
             "connection_count": 0,
         },
         {
-            "id": "json",
+            "id": "legacy-json",
             "name": "JSON",
             "type": "JSON",
+            "connector_code": "json",
             "status": "ok",
             "schema_or_db": "API-friendly выгрузка",
             "last_used_label": "—",
             "connection_count": 0,
         },
         {
-            "id": "xml",
+            "id": "legacy-xml",
             "name": "XML",
             "type": "XML",
+            "connector_code": "xml",
             "status": "ok",
             "schema_or_db": "legacy / EDI",
             "last_used_label": "—",
             "connection_count": 0,
         },
     ]
+
+    wid = get_elt_workspace_id(conn, user, workspace_code)
+    for drow in list_destinations(conn, workspace_id=wid):
+        pl = public_destination_payload(drow)
+        cc = str(pl["connector_code"])
+        type_labels = {
+            "postgres": "PostgreSQL",
+            "csv": "CSV",
+            "xlsx": "XLSX",
+            "clickhouse": "ClickHouse",
+        }
+        cfg = pl.get("config") or {}
+        schema_hint = ""
+        if isinstance(cfg, dict):
+            if cc.lower() in ("postgres", "postgresql", "warehouse"):
+                schema_hint = f"{cfg.get('schema', 'public')}.{cfg.get('table') or cfg.get('table_name', '—')}"
+            elif cc.lower() in ("csv",):
+                schema_hint = str(cfg.get("path") or "—")
+            elif cc.lower() in ("xlsx",):
+                schema_hint = str(cfg.get("path") or "—")
+            elif cc.lower() in ("clickhouse",):
+                schema_hint = f"{cfg.get('database', 'default')}.{cfg.get('table', '—')}"
+        n_conn = int(
+            conn.execute(
+                text("SELECT COUNT(*) FROM connection WHERE destination_id = :did AND workspace_id = :wid"),
+                {"did": pl["id"], "wid": wid},
+            ).scalar_one()
+        )
+        last = pl.get("last_checked_at") or pl.get("updated_at")
+        last_l = "—"
+        if last is not None:
+            last_l = last.isoformat() if hasattr(last, "isoformat") else str(last)
+        st = str(pl.get("status") or "active")
+        items.append(
+            {
+                "id": str(pl["id"]),
+                "name": str(pl["name"]),
+                "type": type_labels.get(cc.lower(), cc),
+                "connector_code": cc,
+                "status": "ok" if st == "active" else "warning",
+                "schema_or_db": schema_hint or "—",
+                "last_used_label": last_l,
+                "connection_count": n_conn,
+            }
+        )
+
     return {"items": items, "warehouse_row_count": n_rows}
 
 
@@ -247,13 +578,16 @@ def data_staging_sheet(
 def data_sync_state(
     _: Annotated[AuthUser, Depends(require_operation("view_sync_state"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
     rows = conn.execute(
         text(
             "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
             "ingest_state, last_success_at, updated_at FROM sync_state "
+            "WHERE workspace_id = :wid "
             "ORDER BY integration_code, stream_name"
-        )
+        ),
+        {"wid": workspace_id},
     ).mappings().all()
     return {"rows": [dict(r) for r in rows]}
 
@@ -262,15 +596,17 @@ def data_sync_state(
 def data_norm_issues(
     _: Annotated[AuthUser, Depends(require_operation("view_normalization_issues"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
     limit: int = 50,
 ) -> dict[str, Any]:
     lim = max(1, min(limit, 200))
     rows = conn.execute(
         text(
-            "SELECT id, batch_id, source_system, source_record_id, field_name, issue_type, message, created_at "
-            "FROM normalization_issue ORDER BY id DESC LIMIT :lim"
+            "SELECT id, batch_id, source_system, source_record_id, field_name, issue_type, message, "
+            "COALESCE(status, 'open') AS status, resolved_at, resolution_note, resolved_by, created_at "
+            "FROM normalization_issue WHERE workspace_id = :wid ORDER BY id DESC LIMIT :lim"
         ),
-        {"lim": lim},
+        {"lim": lim, "wid": workspace_id},
     ).mappings().all()
     return {"rows": [dict(r) for r in rows]}
 
@@ -337,6 +673,7 @@ class MappingProfileRollbackBody(BaseModel):
 @router.post("/data/mapping-profiles/draft")
 def data_mapping_profiles_draft(
     body: MappingProfileDraftBody,
+    request: Request,
     user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
@@ -357,13 +694,24 @@ def data_mapping_profiles_draft(
             status_code=422,
             detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
         ) from exc
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="mapping_draft_create",
+        resource_type="mapping_profile_version",
+        resource_id=str(row.get("id")),
+        payload={"profile_id": row.get("profile_id"), "version": row.get("version")},
+    )
     return {"status": "ok", "item": row}
 
 
 @router.post("/data/mapping-profiles/publish")
 def data_mapping_profiles_publish(
     body: MappingProfilePublishBody,
-    _: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     try:
@@ -373,12 +721,24 @@ def data_mapping_profiles_publish(
             status_code=422,
             detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
         ) from exc
+    wid = _mapping_profile_workspace_id(conn, body.profile_id)
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=wid,
+        action="mapping_publish",
+        resource_type="mapping_profile",
+        resource_id=str(body.profile_id),
+        payload={"version_id": body.version_id, "published_version_id": row.get("id")},
+    )
     return {"status": "ok", "item": row}
 
 
 @router.post("/data/mapping-profiles/activate")
 def data_mapping_profiles_activate(
     body: MappingProfilePublishBody,
+    request: Request,
     user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
@@ -394,12 +754,25 @@ def data_mapping_profiles_activate(
             status_code=422,
             detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
         ) from exc
+    wid = row.get("workspace_id")
+    wid = int(wid) if wid is not None else _mapping_profile_workspace_id(conn, body.profile_id)
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=wid,
+        action="mapping_activate",
+        resource_type="mapping_profile",
+        resource_id=str(body.profile_id),
+        payload={"active_version_id": body.version_id},
+    )
     return {"status": "ok", "item": row}
 
 
 @router.post("/data/mapping-profiles/rollback")
 def data_mapping_profiles_rollback(
     body: MappingProfileRollbackBody,
+    request: Request,
     user: Annotated[AuthUser, Depends(require_operation("edit_mapping_profiles"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
@@ -416,6 +789,17 @@ def data_mapping_profiles_rollback(
             status_code=422,
             detail={"error_code": "mapping_profile_error", "error_message": str(exc)},
         ) from exc
+    wid = _mapping_profile_workspace_id(conn, body.profile_id)
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=wid,
+        action="mapping_rollback",
+        resource_type="mapping_profile",
+        resource_id=str(body.profile_id),
+        payload={"from_version_id": body.version_id, "published_version_id": row.get("id")},
+    )
     return {"status": "ok", "item": row}
 
 
@@ -496,7 +880,8 @@ class ConfigPatch(BaseModel):
 @router.post("/admin/integration-config")
 def admin_integration_config_post(
     body: ConfigPatch,
-    _: Annotated[AuthUser, Depends(require_operation("edit_integration_config"))],
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("edit_integration_config"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
     conn.execute(
@@ -505,6 +890,16 @@ def admin_integration_config_post(
             "RETURNING id"
         ),
         {"k": body.config_key, "v": body.config_value, "s": body.is_secret},
+    )
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=None,
+        action="integration_config_update",
+        resource_type="integration_config",
+        resource_id=body.config_key.strip()[:128],
+        payload={"is_secret": body.is_secret},
     )
     return {"status": "ok", "config_key": body.config_key}
 
@@ -552,37 +947,148 @@ class WorkspaceCreateBody(BaseModel):
     workspace_name: str = Field(min_length=1, max_length=255)
 
 
+class IssueActionBody(BaseModel):
+    note: str | None = Field(default=None, max_length=1000)
+
+
+def _run_stage_from_status(status: str) -> str:
+    s = (status or "").lower()
+    if s == "queued":
+        return "extract"
+    if s == "running":
+        return "dbt_run"
+    if s in ("success", "partial"):
+        return "complete"
+    if s in ("failed", "cancelled"):
+        return "validate"
+    return "extract"
+
+
 @v1.get("/sync-streams")
 def v1_sync_streams_list(
     _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
     """Каталог потоков sync_state (курсоры/кэш); доменные connections — GET /api/v1/connections."""
     rows = conn.execute(
         text(
             "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
-            "last_success_at, updated_at FROM sync_state ORDER BY integration_code, stream_name"
-        )
+            "last_success_at, updated_at FROM sync_state WHERE workspace_id = :wid "
+            "ORDER BY integration_code, stream_name"
+        ),
+        {"wid": workspace_id},
     ).mappings().all()
     return {"items": [dict(r) for r in rows]}
+
+
+@v1.get("/layers/raw")
+def v1_layers_raw(
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    connection_id: int | None = None,
+    stream: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    lim = max(1, min(limit, 500))
+    filters = ["table_schema = 'raw'"]
+    params: dict[str, Any] = {"lim": lim}
+    if stream:
+        filters.append("table_name LIKE :stream_like")
+        params["stream_like"] = f"%__{stream.strip()}%"
+    sql = (
+        "SELECT table_schema, table_name FROM information_schema.tables "
+        "WHERE " + " AND ".join(filters) + " ORDER BY table_name LIMIT :lim"
+    )
+    tables = [dict(r) for r in conn.execute(text(sql), params).mappings().all()]
+    return {"connection_id": connection_id, "stream": stream, "items": tables}
+
+
+@v1.get("/layers/normalized")
+def v1_layers_normalized(
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    connection_id: int | None = None,
+    stream: str | None = None,
+    limit: int = 50,
+) -> dict[str, Any]:
+    lim = max(1, min(limit, 500))
+    filters = ["table_schema = 'normalized'"]
+    params: dict[str, Any] = {"lim": lim}
+    if stream:
+        filters.append("table_name LIKE :stream_like")
+        params["stream_like"] = f"%__{stream.strip()}%"
+    sql = (
+        "SELECT table_schema, table_name FROM information_schema.tables "
+        "WHERE " + " AND ".join(filters) + " ORDER BY table_name LIMIT :lim"
+    )
+    tables = [dict(r) for r in conn.execute(text(sql), params).mappings().all()]
+    return {"connection_id": connection_id, "stream": stream, "items": tables}
+
+
+@v1.get("/dbt/models")
+def v1_dbt_models(
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
+) -> dict[str, Any]:
+    source = "sql"
+    items: list[dict[str, Any]] | None = None
+    manifest_items = _models_from_manifest()
+    if manifest_items:
+        items = manifest_items
+        source = "manifest"
+    if items is None:
+        items = _models_from_sql_scan()
+    return {"items": items, "source": source}
+
+
+@v1.get("/dbt/models/{model_name}/preview")
+def v1_dbt_models_preview(
+    model_name: str,
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    schema: str = "semantic",
+    limit: int = 20,
+) -> dict[str, Any]:
+    lim = max(1, min(limit, 200))
+    model = _safe_ident(model_name.strip().lower(), "model_name")
+    schema_ident = _safe_ident(schema.strip().lower(), "schema")
+    try:
+        rows = conn.execute(
+            text(f'SELECT * FROM "{schema_ident}"."{model}" LIMIT :lim'),
+            {"lim": lim},
+        ).mappings().all()
+    except SQLAlchemyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "error_code": "model_preview_failed",
+                "model_name": model,
+                "schema": schema_ident,
+                "message": str(exc),
+            },
+        ) from exc
+    return {"model_name": model, "schema": schema_ident, "rows": [dict(r) for r in rows]}
 
 
 @v1.post("/sync-streams")
 def v1_sync_streams_upsert(
     body: ConnectionUpsertBody,
-    _: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("manage_connections_api"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
     cv = '{"cursor": null, "edited_via": "api_v1_connections"}'
     ajs = '{"cursor": null, "rows_emitted": 0, "edited_via": "api_v1_connections"}'
     conn.execute(
         text(
-            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, last_success_at, updated_at) "
-            "VALUES (:ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
+            "INSERT INTO sync_state (workspace_id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, last_success_at, updated_at) "
+            "VALUES (:wid, :ic, :sn, :sm, :cf, :cv, CAST(:ajs AS jsonb), NOW(), NOW()) "
             "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
-            "sync_mode = EXCLUDED.sync_mode, cursor_field = EXCLUDED.cursor_field, updated_at = NOW()"
+            "workspace_id = EXCLUDED.workspace_id, sync_mode = EXCLUDED.sync_mode, cursor_field = EXCLUDED.cursor_field, updated_at = NOW()"
         ),
         {
+            "wid": workspace_id,
             "ic": body.integration_code.strip(),
             "sn": body.stream_name.strip(),
             "sm": body.sync_mode.strip(),
@@ -591,6 +1097,16 @@ def v1_sync_streams_upsert(
             "ajs": ajs,
         },
     )
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="sync_stream_upsert",
+        resource_type="sync_state",
+        resource_id=f"{body.integration_code.strip()}:{body.stream_name.strip()}",
+        payload={"sync_mode": body.sync_mode},
+    )
     return {"status": "ok", "integration_code": body.integration_code, "stream_name": body.stream_name}
 
 
@@ -598,16 +1114,20 @@ def v1_sync_streams_upsert(
 def v1_syncs_list(
     _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
     limit: int = 50,
 ) -> dict[str, Any]:
-    return {"items": refresh_recent_sync_runs(conn, limit=limit)}
+    rows = refresh_recent_sync_runs(conn, limit=limit, workspace_id=workspace_id)
+    return {"items": [attach_load_destination(conn, dict(r)) for r in rows]}
 
 
 @v1.post("/syncs/trigger", status_code=status.HTTP_202_ACCEPTED)
 def v1_sync_trigger(
     body: SyncTriggerBody,
+    request: Request,
     user: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
     try:
         connection_id, domain_cid, integration_code, stream_name = resolve_connection(
@@ -616,6 +1136,7 @@ def v1_sync_trigger(
             connection_id=body.connection_id,
             integration_code=(body.integration_code or "").strip() or None,
             stream_name=(body.stream_name or "").strip() or None,
+            workspace_id=workspace_id,
         )
     except SyncRunError as exc:
         raise HTTPException(
@@ -634,6 +1155,7 @@ def v1_sync_trigger(
         stream_name=stream_name,
         triggered_by=user.username,
         note=body.note,
+        workspace_id=workspace_id,
     )
     run_id = int(row["id"])
     try:
@@ -646,6 +1168,22 @@ def v1_sync_trigger(
         row = mark_sync_run_running(conn, run_id=run_id, dagster_run_id=launch.run_id)
     except SyncRunError as exc:
         row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
+        _audit_api(
+            conn,
+            request,
+            user,
+            workspace_id=workspace_id,
+            action="trigger_sync",
+            resource_type="sync_run",
+            resource_id=str(run_id),
+            result="failure",
+            payload={
+                "integration_code": integration_code,
+                "stream_name": stream_name,
+                "error": str(exc),
+                "domain_connection_id": domain_cid,
+            },
+        )
         raise HTTPException(
             status_code=502,
             detail={
@@ -655,6 +1193,21 @@ def v1_sync_trigger(
             },
         ) from exc
 
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="trigger_sync",
+        resource_type="sync_run",
+        resource_id=str(run_id),
+        payload={
+            "integration_code": integration_code,
+            "stream_name": stream_name,
+            "domain_connection_id": domain_cid,
+            "dagster_run_id": row.get("dagster_run_id"),
+        },
+    )
     return {
         "status": "accepted",
         "message": "Sync run accepted and launched",
@@ -668,11 +1221,13 @@ def v1_sync_get(
     run_id: int,
     _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
-    row = get_sync_run(conn, run_id)
+    row = get_sync_run(conn, run_id, workspace_id=workspace_id)
     if row is None:
         raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
-    return {"item": refresh_sync_run_status(conn, row)}
+    current = refresh_sync_run_status(conn, row)
+    return {"item": attach_load_destination(conn, dict(current))}
 
 
 @v1.get("/syncs/{run_id}/status")
@@ -680,8 +1235,9 @@ def v1_sync_status(
     run_id: int,
     _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
     conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
-    row = get_sync_run(conn, run_id)
+    row = get_sync_run(conn, run_id, workspace_id=workspace_id)
     if row is None:
         raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
     current = refresh_sync_run_status(conn, row)
@@ -693,6 +1249,208 @@ def v1_sync_status(
         "error_message": current.get("error_message"),
         "dagster_run_id": current.get("dagster_run_id"),
     }
+
+
+@v1.get("/syncs/{run_id}/logs")
+def v1_sync_logs(
+    run_id: int,
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+) -> dict[str, Any]:
+    run = get_sync_run(conn, run_id, workspace_id=workspace_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
+    current = refresh_sync_run_status(conn, run)
+    rows = conn.execute(
+        text(
+            "SELECT id, sync_run_id, stage, level, message, technical_details, record_ref, created_at "
+            "FROM sync_run_log WHERE sync_run_id = :rid ORDER BY created_at, id"
+        ),
+        {"rid": run_id},
+    ).mappings().all()
+    logs = [dict(r) for r in rows]
+    if not logs:
+        stage = _run_stage_from_status(str(current.get("status") or "queued"))
+        synthetic: list[dict[str, Any]] = [
+            {"stage": "extract", "level": "info", "message": "Extract: запуск извлечения данных из источника."},
+            {"stage": "staging_raw", "level": "info", "message": "Staging raw: запись в raw.* таблицы."},
+            {"stage": "normalize", "level": "info", "message": "Normalize: structural rules -> normalized.*."},
+            {"stage": "dbt_run", "level": "info", "message": "dbt_run: запуск dbt моделей -> semantic.*."},
+            {"stage": "validate", "level": "info", "message": "Validate: проверки качества и целостности."},
+            {"stage": "complete", "level": "info", "message": "Complete: завершение sync run."},
+        ]
+        logs = []
+        for idx, row in enumerate(synthetic, start=1):
+            level = row["level"]
+            if stage == row["stage"] and current.get("status") == "failed":
+                level = "error"
+            logs.append(
+                {
+                    "id": -idx,
+                    "sync_run_id": run_id,
+                    "stage": row["stage"],
+                    "level": level,
+                    "message": row["message"],
+                    "technical_details": {"synthetic": True, "status": current.get("status")},
+                    "record_ref": None,
+                    "created_at": current.get("updated_at") or current.get("created_at"),
+                }
+            )
+    return {"items": logs}
+
+
+@v1.get("/syncs/{run_id}/issues")
+def v1_sync_issues(
+    run_id: int,
+    _: Annotated[AuthUser, Depends(require_operation("view_api_v1_catalog"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+    limit: int = 200,
+) -> dict[str, Any]:
+    run = get_sync_run(conn, run_id, workspace_id=workspace_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
+    lim = max(1, min(limit, 500))
+    rows = conn.execute(
+        text(
+            "SELECT id, batch_id, source_system, source_record_id, field_name, issue_type, message, "
+            "COALESCE(status, 'open') AS status, resolved_at, resolution_note, resolved_by, created_at "
+            "FROM normalization_issue "
+            "WHERE workspace_id = :wid AND (:src IS NULL OR source_system = :src) "
+            "ORDER BY created_at DESC, id DESC LIMIT :lim"
+        ),
+        {"wid": workspace_id, "src": run.get("integration_code"), "lim": lim},
+    ).mappings().all()
+    return {"items": [dict(r) for r in rows]}
+
+
+@v1.post("/syncs/{run_id}/retry", status_code=status.HTTP_202_ACCEPTED)
+def v1_sync_retry(
+    run_id: int,
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+) -> dict[str, Any]:
+    old = get_sync_run(conn, run_id, workspace_id=workspace_id)
+    if old is None:
+        raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
+    row = create_sync_run(
+        conn,
+        connection_id=old.get("connection_id"),
+        domain_connection_id=old.get("domain_connection_id"),
+        integration_code=old.get("integration_code"),
+        stream_name=old.get("stream_name"),
+        triggered_by=user.username,
+        note=f"retry_of:{run_id}",
+        workspace_id=workspace_id,
+    )
+    new_id = int(row["id"])
+    try:
+        launch = launch_dagster_run(
+            sync_run_id=new_id,
+            integration_code=old.get("integration_code"),
+            stream_name=old.get("stream_name"),
+            triggered_by=user.username,
+        )
+        row = mark_sync_run_running(conn, run_id=new_id, dagster_run_id=launch.run_id)
+    except SyncRunError as exc:
+        row = mark_sync_run_failed(conn, run_id=new_id, message=str(exc))
+        _audit_api(
+            conn,
+            request,
+            user,
+            workspace_id=workspace_id,
+            action="trigger_sync_retry",
+            resource_type="sync_run",
+            resource_id=str(new_id),
+            result="failure",
+            payload={"retry_of": run_id, "error": str(exc)},
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error_code": "dagster_launch_failed",
+                "error_message": str(exc),
+                "run_id": new_id,
+            },
+        ) from exc
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="trigger_sync_retry",
+        resource_type="sync_run",
+        resource_id=str(new_id),
+        payload={"retry_of": run_id, "dagster_run_id": row.get("dagster_run_id")},
+    )
+    return {"status": "accepted", "run_id": new_id, "sync_run": row}
+
+
+@v1.post("/issues/{issue_id}/resolve")
+def v1_issue_resolve(
+    issue_id: int,
+    body: IssueActionBody,
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("manage_issues_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+) -> dict[str, Any]:
+    row = conn.execute(
+        text(
+            "UPDATE normalization_issue SET status = 'resolved', resolved_at = NOW(), "
+            "resolved_by = :rb, resolution_note = :note WHERE id = :id AND workspace_id = :wid "
+            "RETURNING id, COALESCE(status, 'open') AS status, resolved_at, resolved_by, resolution_note"
+        ),
+        {"id": issue_id, "wid": workspace_id, "rb": user.username, "note": (body.note or "").strip() or None},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error_code": "issue_not_found"})
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="normalization_issue_resolve",
+        resource_type="normalization_issue",
+        resource_id=str(issue_id),
+        payload={"note": (body.note or "").strip() or None},
+    )
+    return {"item": dict(row)}
+
+
+@v1.post("/issues/{issue_id}/ignore")
+def v1_issue_ignore(
+    issue_id: int,
+    body: IssueActionBody,
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("manage_issues_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+) -> dict[str, Any]:
+    row = conn.execute(
+        text(
+            "UPDATE normalization_issue SET status = 'ignored', resolved_at = NOW(), "
+            "resolved_by = :rb, resolution_note = :note WHERE id = :id AND workspace_id = :wid "
+            "RETURNING id, COALESCE(status, 'open') AS status, resolved_at, resolved_by, resolution_note"
+        ),
+        {"id": issue_id, "wid": workspace_id, "rb": user.username, "note": (body.note or "").strip() or None},
+    ).mappings().first()
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error_code": "issue_not_found"})
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="normalization_issue_ignore",
+        resource_type="normalization_issue",
+        resource_id=str(issue_id),
+        payload={"note": (body.note or "").strip() or None},
+    )
+    return {"item": dict(row)}
 
 
 @v1.get("/workspaces")
@@ -713,6 +1471,7 @@ def v1_workspaces_list(
 @v1.post("/workspaces")
 def v1_workspaces_create(
     body: WorkspaceCreateBody,
+    request: Request,
     user: Annotated[AuthUser, Depends(require_operation("manage_workspaces"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
@@ -744,7 +1503,54 @@ def v1_workspaces_create(
         ),
         {"wc": ws_code, "oc": org_code, "un": user.username},
     )
+    new_wid = conn.execute(
+        text(
+            "SELECT w.id FROM workspace w JOIN organization o ON o.id = w.organization_id "
+            "WHERE o.code = :oc AND w.code = :wc"
+        ),
+        {"oc": org_code, "wc": ws_code},
+    ).scalar()
+    if new_wid is not None:
+        _audit_api(
+            conn,
+            request,
+            user,
+            workspace_id=int(new_wid),
+            action="workspace_create",
+            resource_type="workspace",
+            resource_id=ws_code,
+            payload={"org_code": org_code},
+        )
     return {"status": "ok", "org_code": org_code, "workspace_code": ws_code}
+
+
+@v1.get("/audit-log")
+def v1_audit_log_list(
+    _: Annotated[AuthUser, Depends(require_operation("view_audit_log"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: int | None = None,
+    actor: str | None = None,
+    action: str | None = None,
+    resource_type: str | None = None,
+    result: str | None = None,
+    date_from: str | None = None,
+    date_to: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> dict[str, Any]:
+    rows = list_audit_log(
+        conn,
+        workspace_id=workspace_id,
+        actor_username=actor,
+        action=action,
+        resource_type=resource_type,
+        result=result,
+        date_from=date_from,
+        date_to=date_to,
+        limit=limit,
+        offset=offset,
+    )
+    return {"items": rows}
 
 
 register_elt_routes(v1)

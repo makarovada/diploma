@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import pytest
 from datanorma.normalization.typing import cast_rows_to_typed, load_canonical_schema
+
+pytestmark = pytest.mark.unit
 
 
 def test_cast_rows_logs_errors_and_dedups() -> None:

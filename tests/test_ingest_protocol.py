@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from datanorma.core.ingest_protocol import (
     IngestCatalog,
     IngestMessage,
@@ -11,6 +12,8 @@ from datanorma.core.ingest_protocol import (
     StreamDescriptor,
     SyncMode,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def test_record_message() -> None:

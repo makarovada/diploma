@@ -1,6 +1,14 @@
 import { Link, useLocation } from "wouter";
+import { useAuth } from "@/app/auth-context";
 import { cn } from "@/lib/utils";
-import { navActive, navSections } from "@/lib/nav-config";
+import { navActive, navSections, type NavItem } from "@/lib/nav-config";
+
+function navItemVisible(item: NavItem, isPlatformAdmin: boolean): boolean {
+  if (item.platformAdminOnly && !isPlatformAdmin) {
+    return false;
+  }
+  return true;
+}
 
 export function SidebarContent({
   dark,
@@ -12,6 +20,8 @@ export function SidebarContent({
   onNavigate?: () => void;
 }) {
   const [location] = useLocation();
+  const { user } = useAuth();
+  const isPlatformAdmin = Boolean(user?.roles?.includes("platform_admin"));
 
   return (
     <>
@@ -36,7 +46,7 @@ export function SidebarContent({
           <div key={section.title}>
             <p className="mb-2 px-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{section.title}</p>
             <div className="space-y-1">
-              {section.items.map((item) => {
+              {section.items.filter((item) => navItemVisible(item, isPlatformAdmin)).map((item) => {
                 const testId =
                   item.href === "/" ? "nav-dashboard" : `nav-${item.href.replace(/^\//, "").replace(/\//g, "-")}`;
                 const active = navActive(location, item);

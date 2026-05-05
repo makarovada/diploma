@@ -12,6 +12,8 @@ from datanorma.normalization.enrich import enrich_canonical_rows
 from datanorma.normalization.to_canonical import _lookup_row_value, _map_tabular_row
 from datanorma.normalization.units import normalize_unit_label
 
+pytestmark = pytest.mark.unit
+
 
 def test_parse_cbr_daily_xml_usd_nominal() -> None:
     xml = """<?xml version="1.0" encoding="windows-1251"?>

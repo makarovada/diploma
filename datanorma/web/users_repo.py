@@ -8,6 +8,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
+from datanorma.web.rbac_matrix import ROLE_PLATFORM_ADMIN
+
 
 @dataclass
 class DbUser:
@@ -23,6 +25,35 @@ def update_user_password_hash(conn: Connection, user_id: int, password_hash: str
         text("UPDATE app_user SET password_hash = :h WHERE id = :id"),
         {"h": password_hash, "id": user_id},
     )
+
+
+def load_user_workspaces(conn: Connection, user_id: int) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        text(
+            "SELECT w.id, w.code, w.name FROM user_workspace uw "
+            "JOIN workspace w ON w.id = uw.workspace_id "
+            "WHERE uw.user_id = :id ORDER BY w.id"
+        ),
+        {"id": user_id},
+    ).mappings().all()
+    return [{"id": int(r["id"]), "code": str(r["code"]), "name": str(r["name"])} for r in rows]
+
+
+def list_all_workspace_ids(conn: Connection) -> list[int]:
+    return [int(r[0]) for r in conn.execute(text("SELECT id FROM workspace ORDER BY id")).fetchall()]
+
+
+def load_workspaces_visible(conn: Connection, username: str, roles: frozenset[str]) -> list[dict[str, Any]]:
+    if ROLE_PLATFORM_ADMIN in roles:
+        rows = conn.execute(text("SELECT w.id, w.code, w.name FROM workspace w ORDER BY w.id")).mappings().all()
+        return [{"id": int(r["id"]), "code": str(r["code"]), "name": str(r["name"])} for r in rows]
+    urow = conn.execute(
+        text("SELECT id FROM app_user WHERE username = :u AND COALESCE(is_active, true)"),
+        {"u": username.strip()},
+    ).mappings().first()
+    if urow is None:
+        return []
+    return load_user_workspaces(conn, int(urow["id"]))
 
 
 def load_user_by_username(conn: Connection, username: str) -> DbUser | None:

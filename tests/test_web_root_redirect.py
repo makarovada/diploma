@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from datanorma.web.main import create_app
+
+pytestmark = pytest.mark.integration
 
 
 def test_root_redirects_to_ui_spa() -> None:

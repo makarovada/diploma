@@ -50,6 +50,7 @@ DataNorma в текущей версии:
 - `GoogleSheetsSource`: `gspread` + fallback на sample.
 - `YandexMetrikaSource`: `check/discover/read`, OAuth + Management API или полный набор `data/samples/yandex_metrika_*.json`.
 - `rest_builder`: динамический source по YAML-схеме.
+- **Приёмники (Фаза 7):** `datanorma/destinations/*` — `check` и `write` с режимами `append`, `full_refresh`, `upsert`, `replace_table` для `postgres`, `csv`, `xlsx`, `clickhouse`; API `POST /api/v1/destinations/{id}/check` и `POST /api/v1/destinations/{id}/write`.
 
 ### 4.2 Оркестрация и pipeline (Dagster)
 

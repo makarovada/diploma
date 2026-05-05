@@ -7,6 +7,8 @@ import pytest
 from datanorma.normalization.cbr_rates import amount_to_rub, coerce_currency_code, parse_cbr_daily_xml
 from datanorma.normalization.to_canonical import _map_tabular_row, build_canonical_sales_rows
 
+pytestmark = pytest.mark.unit
+
 
 def test_parse_cbr_respects_nominal() -> None:
     xml = """<?xml version="1.0"?>

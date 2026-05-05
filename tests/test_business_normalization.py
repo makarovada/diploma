@@ -19,6 +19,8 @@ from datanorma.normalization.references import (
 )
 from datanorma.normalization.statuses import resolve_status
 
+pytestmark = pytest.mark.unit
+
 
 def _clear_ref_caches() -> None:
     _status_map_cache.clear()

@@ -24,6 +24,8 @@ export type NavItem = {
   icon: LucideIcon;
   badge?: string;
   match?: "exact" | "prefix";
+  /** Только роль platform_admin (журнал аудита). */
+  platformAdminOnly?: boolean;
 };
 
 export const navSections: { title: string; items: NavItem[] }[] = [
@@ -55,7 +57,7 @@ export const navSections: { title: string; items: NavItem[] }[] = [
     title: "Данные",
     items: [
       { href: "/normalization", label: "Нормализация", icon: WandSparkles, match: "prefix" },
-      { href: "/canonical-model", label: "Каноническая модель", icon: BookOpen, match: "exact" },
+      { href: "/semantic-layer", label: "Семантический слой", icon: BookOpen, match: "exact" },
       { href: "/issues", label: "Проблемные записи", icon: CircleAlert, badge: "73", match: "prefix" },
       { href: "/data-preview", label: "Предпросмотр данных", icon: Database, match: "exact" },
     ],
@@ -67,7 +69,7 @@ export const navSections: { title: string; items: NavItem[] }[] = [
       { href: "/workspaces", label: "Рабочие пространства", icon: Warehouse, match: "prefix" },
       { href: "/dictionaries", label: "Справочники", icon: BookOpen, match: "prefix" },
       { href: "/settings", label: "Настройки", icon: Settings, match: "prefix" },
-      { href: "/audit", label: "Аудит", icon: Activity, match: "prefix" },
+      { href: "/audit", label: "Аудит", icon: Activity, match: "prefix", platformAdminOnly: true },
     ],
   },
   {

@@ -3,7 +3,7 @@ import { useRoute } from "wouter";
 import { LogViewer } from "@/components/log-viewer";
 import { PageHeader } from "@/components/page-header";
 import { LinkAsButton } from "@/components/link-as-button";
-import { fetchV1Sync, mapV1SyncToRun, syncRunLogLines } from "@/lib/api-datanorma";
+import { fetchV1Sync, fetchV1SyncLogs, mapV1SyncToRun, syncRunLogItemsToLines, syncRunLogLines } from "@/lib/api-datanorma";
 import { queryKeys } from "@/lib/query-keys";
 
 export function RunLogsPage() {
@@ -46,7 +46,19 @@ export function RunLogsPage() {
       <LinkAsButton href={`/runs/${run.id}`} variant="outline" data-testid="button-back-run-detail">
         К карточке запуска
       </LinkAsButton>
-      <LogViewer logs={syncRunLogLines(item)} />
+      <RunLogsBody runId={runId} fallback={syncRunLogLines(item)} />
     </div>
   );
+}
+
+function RunLogsBody({ runId, fallback }: { runId: number; fallback: string[] }) {
+  const q = useQuery({
+    queryKey: queryKeys.runs.logs(String(runId)),
+    queryFn: async () => {
+      const { items } = await fetchV1SyncLogs(runId);
+      return items;
+    },
+  });
+  const lines = q.data ? syncRunLogItemsToLines(q.data) : fallback;
+  return <LogViewer logs={lines} />;
 }

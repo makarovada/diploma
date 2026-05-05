@@ -12,6 +12,8 @@ from datanorma.web.main import create_app
 from datanorma.web.rbac_matrix import ALL_ROLES, OPERATION_ROLES, OPERATION_LABELS_RU, matrix_payload
 from datanorma.web.passwords import hash_password, verify_password
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def client():

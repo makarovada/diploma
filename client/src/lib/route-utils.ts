@@ -40,7 +40,7 @@ export const routeSegmentLabels: Record<string, string> = {
   "/schedules": "Расписания",
   "/queue": "Очередь",
   "/normalization": "Нормализация",
-  "/canonical-model": "Каноническая модель",
+  "/semantic-layer": "Семантический слой",
   "/issues": "Проблемные записи",
   "/data-preview": "Предпросмотр данных",
   "/users": "Пользователи и роли",

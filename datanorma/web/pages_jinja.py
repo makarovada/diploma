@@ -24,7 +24,9 @@ from datanorma.config import get_settings
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import create_source
 from datanorma.web.config import dagster_console_url
-from datanorma.web.deps import AuthUser, get_conn
+from datanorma.web.audit_repo import record_audit_event
+from datanorma.web.deps import AuthUser, get_conn, get_engine_cached, resolve_actor_user_id
+from datanorma.web.request_audit import client_ip, client_user_agent
 from datanorma.web.jwt_util import create_access_token
 from datanorma.web.mapping_profiles import (
     MappingProfileError,
@@ -1270,6 +1272,18 @@ def page_user_roles_post(
             ),
             {"u": user_id, "r": role_id},
         )
+    record_audit_event(
+        get_engine_cached(),
+        workspace_id=None,
+        actor_user_id=resolve_actor_user_id(conn, user),
+        action="user_role_change",
+        resource_type="app_user",
+        resource_id=str(user_id),
+        result="success",
+        payload={"role_id": role_id, "op": action},
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
     return RedirectResponse("/app/admin/user-roles", status_code=303)
 
 

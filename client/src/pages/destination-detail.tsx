@@ -11,7 +11,7 @@ import { queryKeys } from "@/lib/query-keys";
 import type { Destination } from "@/lib/types";
 
 async function loadDestinationById(id: string): Promise<Destination> {
-  const { items } = await fetchDestinationsCatalog();
+  const { items } = await fetchDestinationsCatalog(undefined, "main");
   const row = items.find((x) => x.id === id);
   if (row) return mapDestinationCatalogItem(row);
   const d = demoDestinations.find((x) => x.id === id);
@@ -72,14 +72,23 @@ export function DestinationDetailPage() {
   return (
     <div className="space-y-4 p-4">
       {isDemo ? <DemoFallbackBanner /> : null}
-      <PageHeader title={dest.name} description={`${dest.type} · ${dest.schemaOrDb}`} breadcrumbs={`Интеграции / Приёмники / ${dest.name}`} />
+      <PageHeader
+        title={dest.name}
+        description={`${dest.type}${dest.connectorCode ? ` · ${dest.connectorCode}` : ""} · ${dest.schemaOrDb}`}
+        breadcrumbs={`Интеграции / Приёмники / ${dest.name}`}
+      />
       <div className="flex gap-2">
         <LinkAsButton href="/destinations" variant="outline" data-testid="button-back-destinations">
           Назад
         </LinkAsButton>
       </div>
       <Card className="p-4" data-testid="destination-detail-overview">
-        <p className="text-sm">Используется в подключениях (sync_state): {dest.connectionCount}</p>
+        {dest.connectorCode ? (
+          <p className="text-sm" data-testid="destination-detail-connector">
+            Коннектор: <span className="font-medium">{dest.connectorCode}</span>
+          </p>
+        ) : null}
+        <p className="text-sm">Используется в подключениях: {dest.connectionCount}</p>
         <p className="text-sm text-muted-foreground">Последнее использование: {dest.lastUsed}</p>
       </Card>
     </div>

@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
+import pytest
 from datanorma.warehouse.load import _parse_date, _parse_ts, _row_to_payload
+
+pytestmark = pytest.mark.unit
 
 
 def test_parse_ts_iso_z() -> None:

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
 from fastapi.routing import APIRoute
 
 from datanorma.web.main import create_app
+
+pytestmark = pytest.mark.integration
 
 
 def test_at_least_20_unique_app_paths() -> None:

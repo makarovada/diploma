@@ -18,7 +18,7 @@ export function DestinationsPage() {
     queryKey: queryKeys.destinations.list(),
     queryFn: () =>
       withApiOrDemo(async () => {
-        const { items } = await fetchDestinationsCatalog();
+        const { items } = await fetchDestinationsCatalog(undefined, "main");
         return items.map(mapDestinationCatalogItem);
       }, demoDestinations),
   });
@@ -52,6 +52,7 @@ export function DestinationsPage() {
             <tr>
               <th>Название</th>
               <th>Тип</th>
+              <th>Коннектор</th>
               <th>Статус</th>
               <th>Схема / база</th>
               <th>Последнее использование</th>
@@ -64,6 +65,7 @@ export function DestinationsPage() {
               <tr key={d.id} className="border-t" data-testid={`row-destination-${d.id}`}>
                 <td>{d.name}</td>
                 <td>{d.type}</td>
+                <td data-testid={`cell-destination-connector-${d.id}`}>{d.connectorCode ?? "—"}</td>
                 <td>{statusRu[d.status]}</td>
                 <td>{d.schemaOrDb}</td>
                 <td>{d.lastUsed}</td>

@@ -5,8 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from datanorma.normalization.marketing_events import build_canonical_marketing_event_rows, load_marketing_section
 from datanorma.normalization.to_canonical import load_source_mappings
+
+pytestmark = pytest.mark.unit
 
 
 def _load_sample_array(name: str) -> list[dict]:

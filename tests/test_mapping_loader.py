@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 import datanorma.normalization.to_canonical as tc
+
+pytestmark = pytest.mark.unit
 
 
 def test_load_source_mappings_db_override(monkeypatch, tmp_path: Path) -> None:

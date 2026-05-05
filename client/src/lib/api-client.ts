@@ -4,6 +4,7 @@
 const base = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, "") ?? "";
 
 export const TOKEN_STORAGE_KEY = "datanorma_access_token";
+export const WORKSPACE_STORAGE_KEY = "datanorma_active_workspace_id";
 
 export function getStoredToken(): string | null {
   try {
@@ -24,6 +25,33 @@ export function setStoredToken(token: string): void {
 export function clearStoredToken(): void {
   try {
     localStorage.removeItem(TOKEN_STORAGE_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
+export function getStoredWorkspaceId(): number | null {
+  try {
+    const v = localStorage.getItem(WORKSPACE_STORAGE_KEY);
+    if (!v) return null;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setStoredWorkspaceId(id: number): void {
+  try {
+    localStorage.setItem(WORKSPACE_STORAGE_KEY, String(id));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function clearStoredWorkspaceId(): void {
+  try {
+    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
   } catch {
     /* ignore */
   }
@@ -71,6 +99,10 @@ function buildHeaders(init: ApiRequestInit): Headers {
     const t = getStoredToken();
     if (t) {
       headers.set("Authorization", `Bearer ${t}`);
+    }
+    const wid = getStoredWorkspaceId();
+    if (wid !== null) {
+      headers.set("X-Workspace-Id", String(wid));
     }
   }
   return headers;
