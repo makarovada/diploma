@@ -10,6 +10,72 @@ services:
       - "5433:5432"
     volumes:
       - datanorma_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U datanorma -d datanorma"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma
+      DATANORMA_DAGSTER_UI_URL: http://dagster-webserver:3000
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+
+  dagster-webserver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["dagster-webserver", "-h", "0.0.0.0", "-p", "3000", "-w", "/app/dagster_workspace.yaml"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma
+      DAGSTER_HOME: /opt/dagster/dagster_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - datanorma_dagster_home:/opt/dagster/dagster_home
+      - ./docker/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml:ro
+    ports:
+      - "3000:3000"
+
+  dagster-daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["dagster-daemon", "run", "-w", "/app/dagster_workspace.yaml"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma
+      DAGSTER_HOME: /opt/dagster/dagster_home
+    depends_on:
+      postgres:
+        condition: service_healthy
+      dagster-webserver:
+        condition: service_started
+    volumes:
+      - datanorma_dagster_home:/opt/dagster/dagster_home
+      - ./docker/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml:ro
+
+  ui:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run build && npm run preview -- --host 0.0.0.0 --port 5173"
+    environment:
+      VITE_API_PROXY_TARGET: http://fastapi:8080
+    volumes:
+      - ./client:/app
+    depends_on:
+      - fastapi
+    ports:
+      - "5173:5173"
 
 volumes:
   datanorma_pg_data:
+  datanorma_dagster_home:

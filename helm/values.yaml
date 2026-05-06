@@ -1,3 +1,8 @@
+nameOverride: datanorma
+fullnameOverride: datanorma
+
+replicaCount: 1
+
 image:
   repository: datanorma
   tag: latest
@@ -5,10 +10,45 @@ image:
 
 service:
   type: ClusterIP
-  port: 8000
+  port: 8080
 
-env:
-  DATABASE_URL: "postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma"
-  DATANORMA_DAGSTER_UI_URL: "http://dagster:3000"
+serviceAccount:
+  create: true
+  name: datanorma
+
+secret:
+  name: datanorma-secret
+  data:
+    DATABASE_URL: "postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma"
+    DATANORMA_JWT_SECRET: "change-me-in-cluster"
+
+config:
+  name: datanorma-config
+  data:
+    DATANORMA_DAGSTER_UI_URL: "http://dagster-webserver:3000"
+    UVICORN_HOST: "0.0.0.0"
+    UVICORN_PORT: "8080"
+
+ingress:
+  enabled: true
+  className: nginx
+  host: datanorma.local
+  path: /
+  tls:
+    enabled: true
+    secretName: datanorma-tls
+
+migrations:
+  enabled: true
+  image: ""
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 75
+
+networkPolicy:
+  enabled: true
 
 resources: {}
