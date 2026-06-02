@@ -9,6 +9,7 @@ from typing import Any, Iterator
 import pandas as pd
 
 from datanorma.config import get_settings
+from datanorma.sources.source_config import cfg_str
 from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
 from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.resources.paths import DataPathsResource
@@ -31,8 +32,9 @@ def _read_1c_table(path: Path) -> pd.DataFrame:
 class OneCSource(BaseSource):
     integration_code = "1c"
 
-    def __init__(self, paths: DataPathsResource) -> None:
+    def __init__(self, paths: DataPathsResource, *, source_config: dict[str, Any] | None = None) -> None:
         self._paths = paths
+        self._source_config = source_config or {}
         self._settings = get_settings()
         self._last_ingest_mode: str = "1c_sample_csv"
         self._last_columns: list[str] = []
@@ -46,6 +48,9 @@ class OneCSource(BaseSource):
         return list(self._last_columns)
 
     def _resolve_path(self) -> tuple[Path, str]:
+        cfg_path = cfg_str(self._source_config, "export_path")
+        if cfg_path:
+            return Path(cfg_path), "1c_file_connection"
         override = self._settings.datanorma_1c_export_path.strip()
         if override:
             return Path(override), "1c_file_env"
@@ -104,7 +109,7 @@ class OneCSource(BaseSource):
         if not path.is_file():
             raise FileNotFoundError(
                 f"Файл выгрузки 1С не найден: {path}. "
-                "Укажите DATANORMA_1C_EXPORT_PATH или положите sample в data/samples."
+                "В конфигурации источника задайте export_path, либо DATANORMA_1C_EXPORT_PATH, либо положите sample в data/samples."
             )
         df = _read_1c_table(path)
         self._last_columns = list(df.columns)

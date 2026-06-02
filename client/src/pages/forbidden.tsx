@@ -24,8 +24,8 @@ export function ForbiddenPage() {
         ) : null}
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <LinkAsButton href="/">На дашборд</LinkAsButton>
-          <LinkAsButton href="/help" variant="outline">
-            Справка
+          <LinkAsButton href="/connections" variant="outline">
+            Подключения
           </LinkAsButton>
         </div>
       </Card>

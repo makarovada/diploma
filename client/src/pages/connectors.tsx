@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { fetchV1ConnectorsCatalog } from "@/lib/api-datanorma";
 import type { ConnectorCatalogItem } from "@/lib/types";
 
 function mapRole(v: string): ConnectorCatalogItem["role"] {
@@ -20,8 +21,7 @@ export function ConnectorsPage() {
   const query = useQuery({
     queryKey: ["connectors-catalog"],
     queryFn: async () => {
-      const resp = await fetch("/api/v1/connectors/catalog");
-      const body = (await resp.json()) as { items?: Array<Record<string, unknown>> };
+      const body = await fetchV1ConnectorsCatalog("all");
       const items = Array.isArray(body.items) ? body.items : [];
       return items.map((x) => ({
         id: String(x.code ?? ""),

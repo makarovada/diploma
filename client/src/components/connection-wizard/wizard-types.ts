@@ -1,29 +1,39 @@
 import type { IngestCatalogDto } from "@/lib/api-types";
+import type { ColumnRuleType } from "@/components/connection-wizard/column-rule-types";
 
-export type SelectedStreamCfg = {
-  sync_mode: "full_refresh" | "incremental";
-  cursor_field: string | null;
+export type SchemaLayout = "flat" | "entities";
+
+export type StreamDefaultDto = {
+  stream_name: string;
+  sync_mode: string;
+  destination_sync_mode: string;
+  cursor_field: string[] | null;
+  primary_key: string[] | null;
 };
 
-export type WizardMappingRow = {
+export type WizardColumnRuleRow = {
   id: string;
-  streamName: string;
+  /** Internal stream name; null for flat layout display only */
+  entity: string | null;
   sourceField: string;
   targetField: string;
-  transformation: string;
+  ruleType: ColumnRuleType;
   required: boolean;
 };
 
 export type CheckState = { ok: boolean; message: string } | null;
 
-export type WizardPersistMetaV1 = {
-  v: 1;
+export type WizardPersistMetaV2 = {
+  v: 2;
+  layout: SchemaLayout;
+  selected_entities: string[];
   normalization_enabled: boolean;
-  mapping: Array<{
-    stream: string;
+  column_rules: Array<{
+    entity: string | null;
     source_field: string;
     target_field: string;
-    transformation: string;
+    type: string;
+    required: boolean;
   }>;
 };
 
@@ -33,16 +43,17 @@ export type WizardFormState = {
   connectionDescription: string;
   sourceId: number | null;
   credentialsConfigText: string;
-  /** Совпадает с credentialsConfigText после успешного PATCH; иначе нужно снова «Сохранить». */
   credentialsSavedText: string | null;
   sourceCheck: CheckState;
   destinationCheck: CheckState;
+  schemaLayout: SchemaLayout;
+  entityLabels: Record<string, string>;
+  streamDefaults: StreamDefaultDto[];
   discovery: IngestCatalogDto | null;
   discoveryError: string | null;
-  enabledStreamNames: string[];
-  streamOptions: Record<string, SelectedStreamCfg>;
+  selectedEntities: string[];
   destinationId: number | null;
-  mappingRows: WizardMappingRow[];
+  columnRuleRows: WizardColumnRuleRow[];
   normalizationEnabled: boolean;
   scheduleCron: string;
   timezone: string;

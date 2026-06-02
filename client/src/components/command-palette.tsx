@@ -8,8 +8,6 @@ type PaletteItem = { id: string; label: string; hint: string; href: string };
 
 function buildItems(): PaletteItem[] {
   return [
-    { id: "nav-settings", label: "Настройки", hint: "Раздел", href: "/settings" },
-    { id: "nav-norm", label: "Нормализация", hint: "Раздел", href: "/normalization" },
     { id: "nav-connections", label: "Подключения", hint: "Раздел", href: "/connections" },
     { id: "nav-runs", label: "Запуски", hint: "Раздел", href: "/runs" },
     { id: "nav-issues", label: "Проблемные записи", hint: "Раздел", href: "/issues" },

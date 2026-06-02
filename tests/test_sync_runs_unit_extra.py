@@ -79,8 +79,23 @@ def test_resolve_connection_variants_and_attach_destination() -> None:
     assert sr.resolve_connection(conn, domain_connection_id=5, workspace_id=1) == (10, 5, "ozon", "orders")
     assert sr.resolve_connection(conn, connection_id=11, workspace_id=1) == (11, 6, "1c", "sales")
     assert sr.resolve_connection(conn, integration_code="sheet", stream_name="rows", workspace_id=1) == (12, None, "sheet", "rows")
-    row = sr.attach_load_destination(conn, {"id": 1, "domain_connection_id": 6})
+    row = sr.attach_load_destination(conn, {"id": 1, "domain_connection_id": 6, "meta": {}})
     assert row["load_destination"]["connector_code"] == "postgres"
+
+
+def test_public_sync_run_row_extracts_summary() -> None:
+    row = sr.public_sync_run_row(
+        {
+            "id": 1,
+            "meta": {
+                "elt_summary": {"total_rows_written": 42, "total_issues": 2},
+                "duration_ms": 3500,
+            },
+        }
+    )
+    assert row["records_written"] == 42
+    assert row["issues_count"] == 2
+    assert row["duration_ms"] == 3500
 
 
 def test_refresh_sync_run_status_paths(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,6 +118,7 @@ def test_refresh_sync_run_status_paths(monkeypatch: pytest.MonkeyPatch) -> None:
                 "error_message": None,
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),
+                "meta": {},
             }
         ]
     )

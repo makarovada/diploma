@@ -163,6 +163,183 @@ def seed_roles_and_users(conn: Connection) -> None:
             )
 
 
+def seed_workspace_acl_demo(conn: Connection) -> None:
+    """Демо: второе пространство и права участников (после миграции 014)."""
+    admin = conn.execute(
+        text("SELECT id FROM app_user WHERE username = 'seed_admin'")
+    ).scalar()
+    integrator = conn.execute(
+        text("SELECT id FROM app_user WHERE username = 'seed_integrator'")
+    ).scalar()
+    analyst = conn.execute(
+        text("SELECT id FROM app_user WHERE username = 'seed_analyst'")
+    ).scalar()
+    if admin is None:
+        return
+    conn.execute(
+        text(
+            "INSERT INTO organization(code, name) VALUES ('ws-demo', 'Demo Org') "
+            "ON CONFLICT (code) DO NOTHING"
+        )
+    )
+    conn.execute(
+        text(
+            """
+            INSERT INTO workspace(organization_id, code, name, created_by_user_id)
+            SELECT o.id, 'demo', 'Демо-песочница', :uid
+            FROM organization o WHERE o.code = 'ws-demo'
+            ON CONFLICT ON CONSTRAINT uq_workspace_org_code DO UPDATE SET name = EXCLUDED.name
+            """
+        ),
+        {"uid": int(admin)},
+    )
+    demo_wid = conn.execute(
+        text("SELECT w.id FROM workspace w WHERE w.code = 'demo'")
+    ).scalar()
+    if demo_wid is None:
+        return
+    for uid, adm in ((admin, True), (integrator, False), (analyst, False)):
+        if uid is None:
+            continue
+        conn.execute(
+            text(
+                "INSERT INTO user_workspace(user_id, workspace_id, is_admin) "
+                "VALUES (:u, :w, :a) ON CONFLICT (user_id, workspace_id) "
+                "DO UPDATE SET is_admin = EXCLUDED.is_admin"
+            ),
+            {"u": int(uid), "w": int(demo_wid), "a": adm},
+        )
+    integrator_perms = [
+        "source.create",
+        "source.read",
+        "source.update",
+        "destination.read",
+        "connection.read",
+        "connection.sync.run",
+    ]
+    analyst_perms = ["source.read", "destination.read", "connection.read"]
+    if integrator:
+        for p in integrator_perms:
+            conn.execute(
+                text(
+                    "INSERT INTO workspace_member_permission(workspace_id, user_id, permission_code) "
+                    "VALUES (:w, :u, :p) ON CONFLICT DO NOTHING"
+                ),
+                {"w": int(demo_wid), "u": int(integrator), "p": p},
+            )
+    if analyst:
+        for p in analyst_perms:
+            conn.execute(
+                text(
+                    "INSERT INTO workspace_member_permission(workspace_id, user_id, permission_code) "
+                    "VALUES (:w, :u, :p) ON CONFLICT DO NOTHING"
+                ),
+                {"w": int(demo_wid), "u": int(analyst), "p": p},
+            )
+
+
+def seed_workspace_acl_for_all_existing_workspaces(conn: Connection) -> None:
+    """Выдать membership всем пользователям на ВСЕ существующие workspaces.
+
+    Цель: чтобы при выборе "текущего" workspace в UI не было 403 `Нет доступа к workspace`.
+
+    Правила:
+    - `seed_admin` получает `user_workspace.is_admin = true` (права создателя пространства)
+    - остальные пользователи получают membership (is_admin=false)
+    - для non-admin пользователей заполняем `workspace_member_permission` по глобальным ролям
+      (`data_integrator` и `analyst`), чтобы дальше не упираться в "недостаточно прав".
+    """
+
+    seed_admin_uid = conn.execute(
+        text("SELECT id FROM app_user WHERE username = 'seed_admin'")
+    ).scalar()
+    if seed_admin_uid is None:
+        return
+
+    # Вdev-режиме нам важно гарантировать отсутствие "workspace_forbidden" для любых текущих workspace.
+    workspace_ids = conn.execute(text("SELECT id FROM workspace")).scalars().all()
+    if not workspace_ids:
+        return
+
+    # 1) Membership: добавить строки user_workspace для всех пользователей на каждый workspace.
+    # Для seed_admin выставляем is_admin=true. Для остальных не "затираем" возможный is_admin
+    # (если вдруг ранее выставлялся) — OR сохраняет true.
+    conn.execute(
+        text(
+            """
+            INSERT INTO user_workspace (user_id, workspace_id, is_admin)
+            SELECT u.id,
+                   w.id,
+                   (u.id = :seed_uid) AS is_admin
+            FROM app_user u
+            CROSS JOIN workspace w
+            ON CONFLICT (user_id, workspace_id)
+            DO UPDATE SET is_admin = user_workspace.is_admin OR EXCLUDED.is_admin
+            """
+        ),
+        {"seed_uid": int(seed_admin_uid)},
+    )
+
+    # 2) Permissions для non-admin (seed_admin пропускаем, т.к. is_admin=true даёт доступ на всё).
+    # Карта ролей из миграции 014 (минимум, чтобы уйти от 403 "Недостаточно прав").
+    integrator_perms = [
+        "source.create",
+        "source.read",
+        "source.update",
+        "source.delete",
+        "destination.create",
+        "destination.read",
+        "destination.update",
+        "destination.delete",
+        "connection.create",
+        "connection.read",
+        "connection.update",
+        "connection.delete",
+        "connection.sync.run",
+        "mapping.read",
+        "mapping.edit",
+    ]
+    analyst_perms = [
+        "source.read",
+        "destination.read",
+        "connection.read",
+        "mapping.read",
+    ]
+
+    user_role_rows = conn.execute(
+        text(
+            """
+            SELECT ur.user_id, r.name
+            FROM user_role ur
+            JOIN role r ON r.id = ur.role_id
+            """
+        )
+    ).all()
+    roles_by_user: dict[int, set[str]] = {}
+    for user_id, role_name in user_role_rows:
+        roles_by_user.setdefault(int(user_id), set()).add(str(role_name))
+
+    for wid in workspace_ids:
+        for user_id, roles in roles_by_user.items():
+            if user_id == int(seed_admin_uid):
+                continue
+            perm_codes: set[str] = set()
+            if "data_integrator" in roles:
+                perm_codes.update(integrator_perms)
+            if "analyst" in roles:
+                perm_codes.update(analyst_perms)
+            if not perm_codes:
+                continue
+            for p in perm_codes:
+                conn.execute(
+                    text(
+                        "INSERT INTO workspace_member_permission (workspace_id, user_id, permission_code) "
+                        "VALUES (:w, :u, :p) ON CONFLICT DO NOTHING"
+                    ),
+                    {"w": int(wid), "u": int(user_id), "p": p},
+                )
+
+
 def seed_config_and_meta(conn: Connection) -> None:
     cfg = [
         ("seed.pipeline.batch_size", "500", False),
@@ -317,6 +494,8 @@ def run(engine: Engine | None = None) -> dict[str, int]:
         _clear_seed_rows(conn)
         seed_reference(conn)
         seed_roles_and_users(conn)
+        seed_workspace_acl_demo(conn)
+        seed_workspace_acl_for_all_existing_workspaces(conn)
         seed_config_and_meta(conn)
         seed_staging_and_issues(conn)
         seed_normalized_bulk(conn)

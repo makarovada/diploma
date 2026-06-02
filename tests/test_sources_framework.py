@@ -27,20 +27,24 @@ def test_records_merge_schema() -> None:
 
 
 def test_create_yandex_metrika_source_discover(tmp_path: Path) -> None:
-    samples = tmp_path / "data" / "samples"
-    samples.mkdir(parents=True)
-    root = Path(__file__).resolve().parent.parent
-    for fname in (
-        "yandex_metrika_summary.json",
-        "yandex_metrika_visits.json",
-        "yandex_metrika_hits.json",
-        "yandex_metrika_goals_reaches.json",
-    ):
-        src_f = root / "data" / "samples" / fname
-        (samples / fname).write_text(src_f.read_text(encoding="utf-8"), encoding="utf-8")
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = create_source("yandex_metrika", paths=paths)
-    cat = src.discover()
+
+    def _rq(method, url, *, params=None, **kwargs):
+        m = str((params or {}).get("metrics") or "")
+        mlist = [x.strip() for x in m.split(",") if x.strip()]
+        body = {
+            "query": {"dimensions": [{"name": "ym:s:date"}], "metrics": [{"name": n} for n in mlist]},
+            "data": [{"dimensions": [{"name": "2026-05-01"}], "metrics": [0] * len(mlist)}],
+        }
+        return 200, body
+
+    with patch("datanorma.sources.yandex_metrika.request_json", side_effect=_rq):
+        src = create_source(
+            "yandex_metrika",
+            paths=paths,
+            source_config={"oauth_token": "t", "counter_id": "1"},
+        )
+        cat = src.discover()
     assert {s.name for s in cat.streams} == {"summary", "visits", "hits", "goals_reaches"}
 
 

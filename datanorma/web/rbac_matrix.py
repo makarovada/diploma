@@ -38,7 +38,7 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "view_pipeline_runs": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_rbac_matrix": ALL_ROLES,
     "view_ops_console_hint": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
-    # Веб-клиент (фаза C): страницы Jinja2
+    # Общие операции веб-контура (статический /ui, матрица RBAC)
     "web_basic": ALL_ROLES,
     "view_samples_preview": ALL_ROLES,
     "view_pipeline_graph_static": ALL_ROLES,
@@ -60,7 +60,7 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
 
 # Человекочитаемые подписи для таблицы в UI / ВКР.
 OPERATION_LABELS_RU: dict[str, str] = {
-    "view_sales_summary": "Сводка по витрине canonical_sales",
+    "view_sales_summary": "Сводка по витрине продаж",
     "view_sales_rows": "Выборка строк витрины",
     "export_sales_csv": "Выгрузка витрины (CSV)",
     "view_staging_counts": "Счётчики записей в raw_*_staging",

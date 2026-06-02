@@ -1,4 +1,4 @@
-"""Обогащение канонических строк: даты в MSK, amount_rub по ЦБ, единицы, бизнес-поля."""
+"""Обогащение normalized-строк: даты в MSK, amount_rub по ЦБ, единицы, бизнес-поля."""
 
 from __future__ import annotations
 
@@ -158,7 +158,7 @@ def _apply_business_enrichment(
     return fixes
 
 
-def enrich_canonical_rows(
+def enrich_normalized_rows(
     rows: list[dict[str, Any]],
     *,
     fallback_rate_date: date | None = None,

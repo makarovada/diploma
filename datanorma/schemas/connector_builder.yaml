@@ -1,5 +1,5 @@
 # Пример Connector Builder (low-code REST): копируйте и правьте под свой API.
-# Проверка и discover доступны в UI /app/sources/new (тип «REST (YAML)»).
+# Проверка и discover — в мастере подключения в веб-клиенте (тип «REST (YAML)»).
 #
 # Секреты: для bearer / api_key укажите env_var и задайте переменную окружения на воркере.
 version: 1

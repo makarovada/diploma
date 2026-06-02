@@ -36,8 +36,8 @@ class Settings(BaseSettings):
 
     datanorma_repo_root: str = ""
     datanorma_source_mappings_path: str = ""
-    datanorma_warehouse_table: str = "canonical_sales"
-    datanorma_typed_table: str = "typed_canonical_sales"
+    datanorma_warehouse_table: str = "normalized"
+    datanorma_typed_table: str = "normalized"
     datanorma_auto_create_tables: str = ""
     datanorma_jwt_secret: str = ""
     datanorma_jwt_expire_hours: int = 24
@@ -63,6 +63,20 @@ class Settings(BaseSettings):
     gspread_service_account_file: str = ""
     gspread_spreadsheet_id: str = ""
     gspread_worksheet: str = "0"
+
+    # Google OAuth (UI): путь к client_secret JSON и redirect URI в Google Cloud Console
+    datanorma_google_oauth_client_file: str = Field(
+        default="",
+        validation_alias="DATANORMA_GOOGLE_OAUTH_CLIENT_FILE",
+    )
+    datanorma_google_oauth_redirect_uri: str = Field(
+        default="",
+        validation_alias="DATANORMA_GOOGLE_OAUTH_REDIRECT_URI",
+    )
+    datanorma_google_oauth_frontend_return_url: str = Field(
+        default="",
+        validation_alias="DATANORMA_GOOGLE_OAUTH_FRONTEND_RETURN_URL",
+    )
 
     datanorma_1c_export_path: str = ""
 

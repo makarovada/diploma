@@ -1,75 +1,101 @@
-"""Коннектор Яндекс Метрика: discover/read/check на фикстурах."""
+"""Коннектор Яндекс Метрика: моки Management + Reporting API."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import create_source
-from datanorma.sources.yandex_metrika import STREAM_FIXTURE_NAMES, YandexMetrikaSource
 
 pytestmark = pytest.mark.unit
 
 
-def _write_samples(root: Path) -> None:
-    samples = root / "data" / "samples"
-    samples.mkdir(parents=True)
-    for stream, fname in STREAM_FIXTURE_NAMES.items():
-        repo = Path(__file__).resolve().parent.parent / "data" / "samples" / fname
-        if repo.is_file():
-            (samples / fname).write_text(repo.read_text(encoding="utf-8"), encoding="utf-8")
-        else:
-            (samples / fname).write_text("[]", encoding="utf-8")
+def _stat_body() -> dict:
+    return {
+        "query": {
+            "dimensions": [{"name": "ym:s:date"}],
+            "metrics": [
+                {"name": "ym:s:visits"},
+                {"name": "ym:s:users"},
+                {"name": "ym:s:bounceRate"},
+                {"name": "ym:s:pageviews"},
+            ],
+        },
+        "data": [
+            {
+                "dimensions": [{"name": "2026-05-01"}],
+                "metrics": [10, 8, 0.4, 100],
+            }
+        ],
+    }
 
 
-def test_yandex_metrika_discover_four_streams(tmp_path: Path) -> None:
-    _write_samples(tmp_path)
+def test_check_without_creds_fails(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = create_source("yandex_metrika", paths=paths)
-    cat = src.discover()
-    names = {s.name for s in cat.streams}
-    assert names == {"summary", "visits", "hits", "goals_reaches"}
-    for st in cat.streams:
-        assert st.json_schema.get("type") == "object"
+    src = create_source("yandex_metrika", paths=paths, source_config={})
+    res = src.check()
+    assert res.ok is False
 
 
-def test_yandex_metrika_read_from_samples_repo() -> None:
-    root = Path(__file__).resolve().parent.parent
-    paths = DataPathsResource(repo_root=str(root))
-    src = YandexMetrikaSource(paths)
-    summary = list(src.read("summary"))
-    assert len(summary) >= 1
-    assert "date" in summary[0]
-    visits = list(src.read("visits"))
-    assert visits and "visit_id" in visits[0]
-
-
-def test_yandex_metrika_read_incremental_filters(tmp_path: Path) -> None:
-    _write_samples(tmp_path)
+def test_check_management_mock(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = create_source("yandex_metrika", paths=paths)
-    rows = list(src.read("summary", sync_mode="incremental", cursor_field="date", last_cursor="2026-05-01"))
-    for r in rows:
-        assert r["date"] > "2026-05-01"
+    resp = MagicMock()
+    resp.status_code = 200
+    with patch("datanorma.sources.yandex_metrika.httpx.Client") as cli:
+        cli.return_value.__enter__.return_value.get.return_value = resp
+        src = create_source(
+            "yandex_metrika",
+            paths=paths,
+            source_config={"oauth_token": "t", "counter_id": "1"},
+        )
+        res = src.check()
+    assert res.ok is True
 
 
-def test_yandex_metrika_check_ok_with_fixtures(tmp_path: Path) -> None:
-    _write_samples(tmp_path)
+def _stat_for_metrics(metrics: str) -> dict:
+    mlist = [x.strip() for x in metrics.split(",")]
+    return {
+        "query": {
+            "dimensions": [{"name": "ym:s:date"}],
+            "metrics": [{"name": n} for n in mlist],
+        },
+        "data": [
+            {
+                "dimensions": [{"name": "2026-05-01"}],
+                "metrics": list(range(len(mlist))),
+            }
+        ],
+    }
+
+
+def test_discover_mock(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = YandexMetrikaSource(paths)
-    cr = src.check()
-    assert cr.ok
-    assert cr.details and cr.details.get("mode") == "fixture"
+
+    def _rq(method, url, *, params=None, **kwargs):
+        assert "stat/v1/data" in url
+        m = (params or {}).get("metrics") or ""
+        return 200, _stat_for_metrics(str(m))
+
+    with patch("datanorma.sources.yandex_metrika.request_json", side_effect=_rq):
+        src = create_source(
+            "yandex_metrika",
+            paths=paths,
+            source_config={"oauth_token": "t", "counter_id": "1"},
+        )
+        cat = src.discover()
+        assert {s.name for s in cat.streams} == {"summary", "visits", "hits", "goals_reaches"}
 
 
-def test_yandex_metrika_check_fails_without_data(tmp_path: Path) -> None:
-    samples = tmp_path / "data" / "samples"
-    samples.mkdir(parents=True)
-    for fname in STREAM_FIXTURE_NAMES.values():
-        (samples / fname).write_text("[]", encoding="utf-8")
+def test_read_summary_mock(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = YandexMetrikaSource(paths)
-    cr = src.check()
-    assert not cr.ok
+    body = _stat_body()
+    with patch("datanorma.sources.yandex_metrika.request_json", return_value=(200, body)):
+        src = create_source(
+            "yandex_metrika",
+            paths=paths,
+            source_config={"oauth_token": "t", "counter_id": "1"},
+        )
+        rows = list(src.read("summary"))
+        assert rows and "date" in rows[0]

@@ -1,22 +1,34 @@
-"""FastAPI: JWT Bearer, соединение с БД, проверка операций RBAC."""
+"""FastAPI: JWT Bearer, соединение с БД, проверка workspace-прав."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from functools import lru_cache
-from typing import Annotated, Any
+from typing import Annotated, Any, Callable
 
 import jwt
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
 from datanorma.web.config import database_url
 from datanorma.web.jwt_util import decode_token
-from datanorma.web.rbac_matrix import OPERATION_ROLES, ROLE_PLATFORM_ADMIN
+from datanorma.web.permission_service import (
+    ResourceRef,
+    WorkspaceAuthContext,
+    authorize,
+    load_workspace_auth_context,
+)
+from datanorma.web.rbac_matrix import OPERATION_ROLES
 
 security = HTTPBearer(auto_error=False)
+
+_RESOURCE_ID_PARAMS: dict[str, str] = {
+    "source": "source_id",
+    "destination": "destination_id",
+    "connection": "connection_id",
+}
 
 
 def _parse_int_frozenset(raw: Any) -> frozenset[int]:
@@ -40,8 +52,17 @@ class AuthUser:
     allowed_workspace_ids: frozenset[int] = field(default_factory=frozenset)
 
     def can(self, operation: str) -> bool:
+        """Устаревшая проверка по глобальным ролям; предпочтительно require_permission."""
         allowed = OPERATION_ROLES.get(operation, ())
         return bool(self.roles.intersection(allowed))
+
+
+@dataclass(frozen=True)
+class WorkspacePrincipal:
+    user: AuthUser
+    user_id: int
+    workspace_id: int
+    auth_ctx: WorkspaceAuthContext
 
 
 @lru_cache(maxsize=1)
@@ -115,7 +136,6 @@ def _resolve_user_id(conn: Connection, user: AuthUser) -> int:
 
 
 def resolve_actor_user_id(conn: Connection, user: AuthUser) -> int | None:
-    """Для audit_log: id пользователя без выброса 401, если не найден в БД."""
     if user.user_id is not None:
         return user.user_id
     row = conn.execute(
@@ -140,11 +160,6 @@ def _candidate_workspace_id(header: str | None, user: AuthUser) -> int:
 
 
 def _ensure_workspace_membership(conn: Connection, user: AuthUser, workspace_id: int) -> None:
-    if ROLE_PLATFORM_ADMIN in user.roles:
-        ok = conn.execute(text("SELECT 1 FROM workspace WHERE id = :id"), {"id": workspace_id}).first()
-        if ok is None:
-            raise HTTPException(status_code=404, detail={"error_code": "workspace_not_found"})
-        return
     uid = _resolve_user_id(conn, user)
     ok = conn.execute(
         text("SELECT 1 FROM user_workspace WHERE user_id = :uid AND workspace_id = :wid"),
@@ -158,8 +173,6 @@ def _ensure_workspace_membership(conn: Connection, user: AuthUser, workspace_id:
 
 
 def resolve_effective_workspace_id(conn: Connection, user: AuthUser, x_workspace_id: str | None) -> int:
-    """Текущий workspace: заголовок X-Workspace-Id, иначе claims токена; проверка членства."""
-    # Тестовые dependency_overrides часто прокидывают unittest.mock connection.
     if conn.__class__.__module__.startswith("unittest.mock"):
         return 1
     wid = _candidate_workspace_id(x_workspace_id, user)
@@ -175,7 +188,99 @@ def require_request_workspace_id(
     return resolve_effective_workspace_id(conn, user, x_workspace_id)
 
 
+def get_workspace_principal(
+    conn: Annotated[Connection, Depends(get_conn)],
+    user: Annotated[AuthUser, Depends(get_current_user)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+) -> WorkspacePrincipal:
+    uid = _resolve_user_id(conn, user)
+    ctx = load_workspace_auth_context(conn, user_id=uid, workspace_id=workspace_id)
+    if ctx is None:
+        raise HTTPException(
+            status_code=403,
+            detail={"error_code": "workspace_forbidden", "message": "Нет доступа к workspace"},
+        )
+    return WorkspacePrincipal(user=user, user_id=uid, workspace_id=workspace_id, auth_ctx=ctx)
+
+
+def _resource_from_request(request: Request, resource_type: str) -> ResourceRef | None:
+    param = _RESOURCE_ID_PARAMS.get(resource_type)
+    if not param:
+        return None
+    raw = request.path_params.get(param)
+    if raw is None:
+        return None
+    try:
+        return ResourceRef(resource_type=resource_type, resource_id=int(raw))
+    except (TypeError, ValueError):
+        return None
+
+
+def require_permission(
+    permission: str,
+    *,
+    resource_type: str | None = None,
+    resource_resolver: Callable[[Request], ResourceRef | None] | None = None,
+):
+    def _dep(
+        request: Request,
+        conn: Annotated[Connection, Depends(get_conn)],
+        principal: Annotated[WorkspacePrincipal, Depends(get_workspace_principal)],
+    ) -> WorkspacePrincipal:
+        resource: ResourceRef | None = None
+        if resource_resolver is not None:
+            resource = resource_resolver(request)
+        elif resource_type is not None:
+            resource = _resource_from_request(request, resource_type)
+        if not authorize(principal.auth_ctx, conn, permission=permission, resource=resource):
+            raise HTTPException(
+                status_code=403,
+                detail={
+                    "permission": permission,
+                    "message": "Недостаточно прав для этой операции",
+                },
+            )
+        return principal
+
+    return _dep
+
+
+class WorkspacePrincipalFromPath:
+    """FastAPI dependency: membership + auth context по workspace_id из path."""
+
+    def __init__(self, permission: str, *, resource_type: str | None = None) -> None:
+        self.permission = permission
+        self.resource_type = resource_type
+
+    def __call__(
+        self,
+        workspace_id: int,
+        request: Request,
+        conn: Annotated[Connection, Depends(get_conn)],
+        user: Annotated[AuthUser, Depends(get_current_user)],
+    ) -> WorkspacePrincipal:
+        uid = _resolve_user_id(conn, user)
+        ctx = load_workspace_auth_context(conn, user_id=uid, workspace_id=workspace_id)
+        if ctx is None:
+            raise HTTPException(
+                status_code=403,
+                detail={"error_code": "workspace_forbidden", "message": "Нет доступа к workspace"},
+            )
+        principal = WorkspacePrincipal(user=user, user_id=uid, workspace_id=workspace_id, auth_ctx=ctx)
+        resource: ResourceRef | None = None
+        if self.resource_type is not None:
+            resource = _resource_from_request(request, self.resource_type)
+        if not authorize(principal.auth_ctx, conn, permission=self.permission, resource=resource):
+            raise HTTPException(
+                status_code=403,
+                detail={"permission": self.permission, "message": "Недостаточно прав для этой операции"},
+            )
+        return principal
+
+
 def require_operation(operation: str):
+    """Устаревший dependency; оставлен для постепенной миграции тестов."""
+
     def _dep(user: Annotated[AuthUser, Depends(get_current_user)]) -> AuthUser:
         if not user.can(operation):
             raise HTTPException(

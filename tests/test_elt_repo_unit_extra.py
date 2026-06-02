@@ -29,6 +29,41 @@ class _Rows:
         return bool(self.rows)
 
 
+_CONN_LIST_ROW = {
+    "id": 11,
+    "workspace_id": 1,
+    "name": "C",
+    "description": None,
+    "source_id": 1,
+    "destination_id": 2,
+    "status": "active",
+    "schedule_cron": None,
+    "timezone": "UTC",
+    "is_active": True,
+    "created_by": None,
+    "created_at": None,
+    "updated_at": None,
+    "wizard_meta": None,
+    "stream_count": 1,
+    "source_name": "S",
+    "source_connector_code": "ozon",
+    "destination_name": "D",
+    "destination_connector_code": "postgres",
+}
+_CONN_GET_ROW = {k: v for k, v in _CONN_LIST_ROW.items() if k != "stream_count"}
+_STREAM_ROW = {
+    "id": 21,
+    "connection_id": 11,
+    "stream_name": "orders",
+    "sync_mode": "incremental",
+    "cursor_field": "updated_at",
+    "primary_key": None,
+    "is_enabled": True,
+    "cursor_value": None,
+    "mapping_profile_id": None,
+}
+
+
 def test_config_helpers_and_public_payloads() -> None:
     assert repo._config_load('{"a":1}') == {"a": 1}
     assert repo._config_load("bad-json") == {}
@@ -112,12 +147,13 @@ def test_destinations_connections_and_touch_helpers(monkeypatch: pytest.MonkeyPa
 
     conn2 = MagicMock()
     conn2.execute.side_effect = [
-        _Rows([{"id": 11, "workspace_id": 1}]),
-        _Rows([{"id": 11, "workspace_id": 1}]),
-        _Rows([{"id": 21, "connection_id": 11, "stream_name": "orders"}]),
-        _Rows([{"ok": 1}]),
-        _Rows([{"id": 11, "workspace_id": 1}]),
-        _Rows([{"id": 21, "connection_id": 11, "stream_name": "orders"}]),
+        _Rows([_CONN_LIST_ROW]),
+        _Rows([_CONN_GET_ROW]),
+        _Rows([_STREAM_ROW]),
+        _Rows([{"1": 1}]),
+        _Rows([]),
+        _Rows([_CONN_GET_ROW]),
+        _Rows([_STREAM_ROW]),
         _Rows([{"id": 11}]),
     ]
     assert repo.list_connections(conn2, workspace_id=1)[0]["id"] == 11

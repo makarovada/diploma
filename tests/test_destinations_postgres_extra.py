@@ -9,6 +9,7 @@ from datanorma.destinations.base import WriteMode
 from datanorma.destinations.postgres import (
     PostgresDestination,
     _column_names,
+    _normalize_postgres_url,
     _primary_key,
     _quote_ident,
 )
@@ -16,10 +17,20 @@ from datanorma.destinations.postgres import (
 pytestmark = pytest.mark.unit
 
 
+def test_normalize_postgres_url() -> None:
+    assert _normalize_postgres_url("postgresql://u:p@h:5432/db") == "postgresql+psycopg://u:p@h:5432/db"
+    assert _normalize_postgres_url("postgres://u:p@h/db") == "postgresql+psycopg://u:p@h/db"
+    assert _normalize_postgres_url("postgresql+psycopg://u@h/db") == "postgresql+psycopg://u@h/db"
+    assert _normalize_postgres_url("") == ""
+
+
 def test_quote_ident_and_primary_key_helpers() -> None:
     assert _quote_ident("orders") == '"orders"'
+    assert _quote_ident("вес") == '"вес"'
+    assert _quote_ident("orders;drop") == '"orders;drop"'
+    assert _quote_ident('col"name') == '"col""name"'
     with pytest.raises(ValueError):
-        _quote_ident("orders;drop")
+        _quote_ident("")
     assert _primary_key({}) == ["id"]
     assert _primary_key({"primary_key": "external_id"}) == ["external_id"]
     assert _primary_key({"primary_key": ["id", "shop_id"]}) == ["id", "shop_id"]

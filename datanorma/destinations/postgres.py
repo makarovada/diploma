@@ -16,19 +16,76 @@ from datanorma.destinations.base import (
     WriteMode,
 )
 
-_SAFE_IDENT = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+_UNSAFE_IDENT_CHAR = re.compile(r"[\x00\r\n]")
 
 
 def _quote_ident(name: str) -> str:
-    if not _SAFE_IDENT.match(name):
+    """Экранирует идентификатор для PostgreSQL (поддерживает Unicode, напр. заголовки из Sheets)."""
+    n = str(name).strip()
+    if not n:
+        raise ValueError("Пустой идентификатор")
+    if _UNSAFE_IDENT_CHAR.search(n):
         raise ValueError(f"Недопустимый идентификатор: {name!r}")
-    return f'"{name}"'
+    return '"' + n.replace('"', '""') + '"'
+
+
+def _insert_bind_parts(cols: list[str]) -> tuple[str, str, list[str]]:
+    col_sql = ", ".join(_quote_ident(c) for c in cols)
+    bind_names = [f"p{i}" for i in range(len(cols))]
+    placeholders = ", ".join(f":{bn}" for bn in bind_names)
+    return col_sql, placeholders, bind_names
+
+
+def _insert_payload(cols: list[str], bind_names: list[str], row: dict[str, Any]) -> dict[str, Any]:
+    return {bind_names[i]: row.get(cols[i]) for i in range(len(cols))}
+
+
+def _table_columns(conn: Any, schema_n: str, table_n: str) -> set[str]:
+    rows = conn.execute(
+        text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_schema = :s AND table_name = :t"
+        ),
+        {"s": schema_n, "t": table_n},
+    ).all()
+    return {str(r[0]) for r in rows}
+
+
+def _create_table(conn: Any, full_table: str, cols: list[str], pk_sql: str = "") -> None:
+    col_defs = ", ".join(f"{_quote_ident(c)} TEXT" for c in cols)
+    conn.execute(text(f"CREATE TABLE {full_table} ({col_defs}{pk_sql})"))
+
+
+def _ensure_table_columns(conn: Any, full_table: str, schema_n: str, table_n: str, cols: list[str]) -> None:
+    existing = _table_columns(conn, schema_n, table_n)
+    if not existing:
+        _create_table(conn, full_table, cols)
+        return
+    for col in cols:
+        if col not in existing:
+            conn.execute(text(f"ALTER TABLE {full_table} ADD COLUMN {_quote_ident(col)} TEXT"))
+
+
+def _normalize_postgres_url(url: str) -> str:
+    """Приводит URL к драйверу psycopg v3 (в проекте нет psycopg2)."""
+    u = url.strip()
+    if not u:
+        return u
+    if u.startswith("postgresql+psycopg://") or u.startswith("postgres+psycopg://"):
+        return u
+    if u.startswith("postgresql://"):
+        return "postgresql+psycopg://" + u[len("postgresql://") :]
+    if u.startswith("postgres://"):
+        return "postgresql+psycopg://" + u[len("postgres://") :]
+    return u
 
 
 def _engine_for_config(config: dict[str, Any]) -> Engine:
     url = str(config.get("url") or "").strip()
     if not url:
         url = get_settings().database_url
+    else:
+        url = _normalize_postgres_url(url)
     return create_engine(url, pool_pre_ping=True)
 
 
@@ -114,8 +171,7 @@ class PostgresDestination(BaseDestination):
             with eng.begin() as conn:
                 if mode == WriteMode.replace_table:
                     conn.execute(text(f"DROP TABLE IF EXISTS {full_table} CASCADE"))
-                    col_defs = ", ".join(f'{_quote_ident(c)} TEXT' for c in cols)
-                    conn.execute(text(f"CREATE TABLE {full_table} ({col_defs})"))
+                    _create_table(conn, full_table, cols)
                     if not rows:
                         return DestinationWriteResult(
                             ok=True,
@@ -132,10 +188,10 @@ class PostgresDestination(BaseDestination):
                         {"s": schema_n, "t": table_n},
                     ).first()
                     if exists_fr:
+                        _ensure_table_columns(conn, full_table, schema_n, table_n, cols)
                         conn.execute(text(f"TRUNCATE TABLE {full_table} RESTART IDENTITY CASCADE"))
-                    elif rows:
-                        col_defs = ", ".join(f'{_quote_ident(c)} TEXT' for c in cols)
-                        conn.execute(text(f"CREATE TABLE {full_table} ({col_defs})"))
+                    elif cols:
+                        _create_table(conn, full_table, cols)
                 elif mode == WriteMode.upsert:
                     pk_cols = _primary_key(config)
                     missing_pk = [c for c in pk_cols if c not in cols]
@@ -152,11 +208,12 @@ class PostgresDestination(BaseDestination):
                         {"s": schema_n, "t": table_n},
                     ).first()
                     if not exists_u:
-                        col_defs = ", ".join(f'{_quote_ident(c)} TEXT' for c in cols)
                         pk_sql = ""
                         if pk_cols and all(c in cols for c in pk_cols):
                             pk_sql = ", PRIMARY KEY (" + ", ".join(_quote_ident(c) for c in pk_cols) + ")"
-                        conn.execute(text(f"CREATE TABLE {full_table} ({col_defs}{pk_sql})"))
+                        _create_table(conn, full_table, cols, pk_sql)
+                    else:
+                        _ensure_table_columns(conn, full_table, schema_n, table_n, cols)
 
                 elif mode == WriteMode.append:
                     exists_a = conn.execute(
@@ -166,8 +223,9 @@ class PostgresDestination(BaseDestination):
                         {"s": schema_n, "t": table_n},
                     ).first()
                     if not exists_a:
-                        col_defs = ", ".join(f'{_quote_ident(c)} TEXT' for c in cols)
-                        conn.execute(text(f"CREATE TABLE {full_table} ({col_defs})"))
+                        _create_table(conn, full_table, cols)
+                    else:
+                        _ensure_table_columns(conn, full_table, schema_n, table_n, cols)
 
                 if not rows:
                     return DestinationWriteResult(
@@ -177,8 +235,7 @@ class PostgresDestination(BaseDestination):
                         details={"table": f"{schema_n}.{table_n}", "mode": mode.value},
                     )
 
-                col_sql = ", ".join(_quote_ident(c) for c in cols)
-                placeholders = ", ".join(f":{c}" for c in cols)
+                col_sql, placeholders, bind_names = _insert_bind_parts(cols)
 
                 if mode == WriteMode.upsert:
                     pk_cols = _primary_key(config)
@@ -194,13 +251,11 @@ class PostgresDestination(BaseDestination):
                     )
                     # Требуется UNIQUE/PK в БД; если нет — создаём уникальный индекс по PK для новой таблицы выше
                     for r in rows:
-                        payload = {c: r.get(c) for c in cols}
-                        conn.execute(text(sql), payload)
+                        conn.execute(text(sql), _insert_payload(cols, bind_names, r))
                 else:
                     sql = f"INSERT INTO {full_table} ({col_sql}) VALUES ({placeholders})"
                     for r in rows:
-                        payload = {c: r.get(c) for c in cols}
-                        conn.execute(text(sql), payload)
+                        conn.execute(text(sql), _insert_payload(cols, bind_names, r))
 
             return DestinationWriteResult(
                 ok=True,

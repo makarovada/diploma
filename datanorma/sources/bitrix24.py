@@ -1,89 +1,154 @@
-"""Коннектор Bitrix24: check / discover / read (минимальное ядро + fixtures)."""
+"""Коннектор Bitrix24: входящий webhook + CRM list methods."""
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any, Iterator
 
 from datanorma.config import get_settings
 from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
+from datanorma.http.client import request_json
 from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.normalization.default_stream_rules import default_stream_rules_from_json_schema
 from datanorma.normalization.rules import StreamRules
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
 from datanorma.sources.schema_inference import records_to_json_schema
+from datanorma.sources.source_config import cfg_str
 
 _log = logging.getLogger(__name__)
+
+_STREAM_METHODS: dict[str, str] = {
+    "crm_deals": "crm.deal.list",
+    "crm_contacts": "crm.contact.list",
+    "crm_leads": "crm.lead.list",
+    "crm_companies": "crm.company.list",
+}
+_CURSOR_FIELD_RAW = "DATE_MODIFY"
+
+_PAGE_SIZE = 50
 
 
 class Bitrix24Source(BaseSource):
     integration_code = "bitrix24"
 
-    _STREAM_FIXTURES: dict[str, str] = {
-        "crm_deals": "bitrix24_deals.json",
-        "crm_contacts": "bitrix24_contacts.json",
-        "crm_leads": "bitrix24_leads.json",
-        "crm_companies": "bitrix24_companies.json",
-    }
-
-    _CURSOR_FIELD_RAW = "DATE_MODIFY"
-
-    def __init__(self, paths: DataPathsResource) -> None:
+    def __init__(self, paths: DataPathsResource, *, source_config: dict[str, Any] | None = None) -> None:
         self._paths = paths
+        self._source_config = source_config or {}
         self._settings = get_settings()
-        self._last_ingest_mode: str = "fixture"
+        self._last_ingest_mode: str = "bitrix24_api"
+
+    def _webhook_url(self) -> str:
+        return cfg_str(self._source_config, "webhook_url", self._settings.bitrix24_webhook_url or "").rstrip("/")
 
     @property
-    def last_ingest_mode(self) -> str:  # pragma: no cover
+    def last_ingest_mode(self) -> str:
         return self._last_ingest_mode
 
     def _normalize_record(self, rec: dict[str, Any]) -> dict[str, Any]:
-        # PHONE/EMAIL в Bitrix часто приходят массивами; разворачиваем в первое значение.
         if isinstance(rec.get("PHONE"), list):
             rec["PHONE"] = rec["PHONE"][0] if rec["PHONE"] else None
         if isinstance(rec.get("EMAIL"), list):
             rec["EMAIL"] = rec["EMAIL"][0] if rec["EMAIL"] else None
         return rec
 
-    def _load_fixture_rows(self, stream_name: str) -> list[dict[str, Any]]:
-        fname = self._STREAM_FIXTURES.get(stream_name)
-        if not fname:
+    def _call_method(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        base = self._webhook_url()
+        if not base:
+            raise ValueError("Bitrix24: пустой webhook_url.")
+        url = f"{base}/{method}.json"
+        status, body = request_json("POST", url, json_body=params)
+        if status >= 400:
+            raise RuntimeError(f"Bitrix24 HTTP {status}: {body!r}")
+        if not isinstance(body, dict):
+            raise RuntimeError(f"Bitrix24: неожиданный ответ {type(body)}")
+        return body
+
+    def _paginate(self, method: str, base_params: dict[str, Any]) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        start = 0
+        while True:
+            params = {**base_params, "start": start}
+            body = self._call_method(method, params)
+            chunk = body.get("result") or []
+            if isinstance(chunk, list):
+                out.extend(self._normalize_record(dict(x)) for x in chunk if isinstance(x, dict))
+            if "next" not in body:
+                break
+            start = int(body.get("next") or 0)
+            if not isinstance(chunk, list) or not chunk:
+                break
+        return out
+
+    def _fetch_all(self, stream_name: str) -> list[dict[str, Any]]:
+        method = _STREAM_METHODS.get(stream_name)
+        if not method:
             raise ValueError(f"Bitrix24: неизвестный stream {stream_name!r}")
-        path = self._paths.sample_file(fname)
-        if not path.is_file():
+        return self._paginate(
+            method,
+            {"order": {_CURSOR_FIELD_RAW: "ASC"}},
+        )
+
+    def _fetch_incremental(self, stream_name: str, last_cursor: str | None) -> list[dict[str, Any]]:
+        method = _STREAM_METHODS.get(stream_name)
+        if not method:
+            raise ValueError(f"Bitrix24: неизвестный stream {stream_name!r}")
+        filt: dict[str, Any] = {}
+        if last_cursor:
+            filt[">DATE_MODIFY"] = last_cursor
+        base = {"order": {_CURSOR_FIELD_RAW: "ASC"}}
+        if filt:
+            base["filter"] = filt
+        return self._paginate(method, base)
+
+    def _sample_rows(self, stream_name: str, limit: int = 80) -> list[dict[str, Any]]:
+        method = _STREAM_METHODS.get(stream_name)
+        if not method:
+            raise ValueError(f"Bitrix24: неизвестный stream {stream_name!r}")
+        body = self._call_method(
+            method,
+            {"start": 0, "order": {_CURSOR_FIELD_RAW: "DESC"}},
+        )
+        chunk = body.get("result") or []
+        if not isinstance(chunk, list):
             return []
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return [self._normalize_record(x) for x in data if isinstance(x, dict)]
-        if isinstance(data, dict):
-            inner = data.get("result") or data.get("rows") or data.get("records") or data.get("data")
-            if isinstance(inner, list):
-                return [self._normalize_record(x) for x in inner if isinstance(x, dict)]
-        return []
+        rows = [self._normalize_record(dict(x)) for x in chunk if isinstance(x, dict)]
+        return rows[:limit]
 
     def check(self) -> SourceCheckResult:
-        webhook_url = (self._settings.bitrix24_webhook_url or "").strip()
+        webhook_url = self._webhook_url()
         if not webhook_url:
-            return SourceCheckResult(ok=True, message="Bitrix24 без webhook: доступен sample (fixtures).", details={"mode": "fixture"})
-        # API-режим не реализуем в этом этапе.
-        return SourceCheckResult(ok=True, message="Bitrix24: webhook задан, используется fixtures.", details={"mode": "fixture"})
+            return SourceCheckResult(ok=False, message="Укажите webhook_url входящего webhook Bitrix24.", details={})
+        try:
+            body = self._call_method(
+                "crm.deal.list",
+                {"select": ["ID"], "start": 0},
+            )
+            n = len(body.get("result") or []) if isinstance(body.get("result"), list) else 0
+            return SourceCheckResult(
+                ok=True,
+                message=f"Bitrix24 webhook отвечает (crm.deal.list: {n} записей в первой странице).",
+                details={"mode": "bitrix24_api"},
+            )
+        except Exception as exc:
+            return SourceCheckResult(ok=False, message=str(exc), details={"mode": "bitrix24_api"})
 
     def discover(self) -> IngestCatalog:
+        if not self._webhook_url():
+            raise ValueError("Bitrix24: нужен webhook_url.")
         streams_out = []
-        for stream_name in self._STREAM_FIXTURES.keys():
-            rows = self._load_fixture_rows(stream_name)
-            schema = records_to_json_schema(rows[:200]) if rows else {"type": "object", "properties": {}}
-            stream = self.ingest_stream(
-                stream_name,
-                schema,
-                sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
-                default_cursor_field=[self._CURSOR_FIELD_RAW],
-                source_defined_cursor=True,
+        for stream_name in _STREAM_METHODS:
+            rows = self._sample_rows(stream_name, limit=200)
+            schema = records_to_json_schema(rows) if rows else {"type": "object", "properties": {}}
+            streams_out.append(
+                self.ingest_stream(
+                    stream_name,
+                    schema,
+                    sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
+                    default_cursor_field=[_CURSOR_FIELD_RAW],
+                    source_defined_cursor=True,
+                )
             )
-            streams_out.append(stream)
         return IngestCatalog(streams=streams_out)
 
     def read(
@@ -94,12 +159,17 @@ class Bitrix24Source(BaseSource):
         cursor_field: str | None = None,
         last_cursor: str | None = None,
     ) -> Iterator[dict[str, Any]]:
-        if stream_name not in self._STREAM_FIXTURES:
+        if stream_name not in _STREAM_METHODS:
             raise ValueError(f"Bitrix24: неизвестный stream {stream_name!r}")
-        rows = self._load_fixture_rows(stream_name)
-        self._last_ingest_mode = "fixture"
+        if not self._webhook_url():
+            raise ValueError("Bitrix24: нужен webhook_url.")
 
-        eff_cursor = cursor_field or self._CURSOR_FIELD_RAW
+        if sync_mode == "incremental" and last_cursor:
+            rows = self._fetch_incremental(stream_name, last_cursor)
+        else:
+            rows = self._fetch_all(stream_name)
+
+        eff_cursor = cursor_field or _CURSOR_FIELD_RAW
         filtered = filter_incremental_dict_rows(
             rows,
             cursor_field=eff_cursor,
@@ -110,7 +180,6 @@ class Bitrix24Source(BaseSource):
 
     def default_stream_rules(self, stream_name: str, json_schema: dict) -> StreamRules:
         cursor_target = "date_modify"
-        # Primary key для upsert не фиксируем: позволяем surrogate id.
         return default_stream_rules_from_json_schema(
             stream_name=stream_name,
             json_schema=json_schema,
@@ -118,4 +187,3 @@ class Bitrix24Source(BaseSource):
             cursor_field=cursor_target,
             primary_key=[],
         )
-

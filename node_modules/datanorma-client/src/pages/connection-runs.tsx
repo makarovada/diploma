@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { StatusBadge } from "@/components/status-badge";
 import { useConnectionFromPath } from "@/hooks/use-connection-from-path";
 import { Card } from "@/components/ui/card";
-import { fetchV1Syncs, mapV1SyncToRun } from "@/lib/api-datanorma";
+import { fetchV1Syncs, mapV1SyncToRun, syncRunMatchesEltConnection } from "@/lib/api-datanorma";
 import { queryKeys } from "@/lib/query-keys";
 
 export function ConnectionRunsPage() {
@@ -15,7 +15,7 @@ export function ConnectionRunsPage() {
     queryFn: async () => {
       const { items } = await fetchV1Syncs(200);
       return items
-        .filter((s) => s.connection_id != null && String(s.connection_id) === id)
+        .filter((s) => syncRunMatchesEltConnection(s, id))
         .sort((a, b) => {
           const ta = a.started_at ? new Date(a.started_at).getTime() : 0;
           const tb = b.started_at ? new Date(b.started_at).getTime() : 0;

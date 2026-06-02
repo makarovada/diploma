@@ -1,4 +1,4 @@
-"""Корневой URL ведёт на React SPA (/ui/), Jinja остаётся на /app/*."""
+"""Корневой URL перенаправляет на React SPA (/ui/)."""
 
 from __future__ import annotations
 

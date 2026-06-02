@@ -162,6 +162,53 @@ export async function apiPostJson<T, B = unknown>(path: string, body: B, init: A
   return JSON.parse(text) as T;
 }
 
+export function formatApiErrorMessage(e: unknown, fallback = "Ошибка запроса"): string {
+  if (!(e instanceof ApiError)) {
+    return e instanceof Error ? e.message : fallback;
+  }
+  try {
+    const j = JSON.parse(e.body) as { detail?: { message?: string } | string };
+    const d = j.detail;
+    if (typeof d === "object" && d && "message" in d && typeof d.message === "string") {
+      return d.message;
+    }
+    if (typeof d === "string" && d.trim()) return d;
+  } catch {
+    /* ignore */
+  }
+  return e.message || fallback;
+}
+
+export async function apiPutJson<T, B = unknown>(path: string, body: B, init: ApiRequestInit = {}): Promise<T> {
+  const headers = buildHeaders(init);
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  const sentBearer = headers.has("Authorization");
+  const res = await fetch(joinUrl(path), {
+    method: "PUT",
+    ...init,
+    headers,
+    body: JSON.stringify(body),
+  });
+  const text = await handleResponse(res, sentBearer, init);
+  if (!text) {
+    return undefined as T;
+  }
+  return JSON.parse(text) as T;
+}
+
+export async function apiDelete(path: string, init: ApiRequestInit = {}): Promise<void> {
+  const headers = buildHeaders(init);
+  const sentBearer = headers.has("Authorization");
+  const res = await fetch(joinUrl(path), {
+    method: "DELETE",
+    ...init,
+    headers,
+  });
+  await handleResponse(res, sentBearer, init);
+}
+
 export async function apiPatchJson<T, B = unknown>(path: string, body: B, init: ApiRequestInit = {}): Promise<T> {
   const headers = buildHeaders(init);
   if (!headers.has("Content-Type")) {

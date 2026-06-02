@@ -47,7 +47,7 @@ export function ConnectionIssuesPage() {
             </tr>
           </thead>
           <tbody>
-            {issuesQuery.isPending ? (
+            {issuesQuery.isLoading ? (
               <tr>
                 <td colSpan={6} className="p-4 text-muted-foreground">
                   Загрузка проблем…
@@ -72,7 +72,7 @@ export function ConnectionIssuesPage() {
           </tbody>
         </table>
       </div>
-      {!issuesQuery.isPending && rows.length === 0 ? <p className="text-sm text-muted-foreground">Нет проблем для этого подключения.</p> : null}
+      {!issuesQuery.isLoading && rows.length === 0 ? <p className="text-sm text-muted-foreground">Нет проблем для этого подключения.</p> : null}
     </div>
   );
 }

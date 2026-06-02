@@ -28,6 +28,20 @@ def test_sql_util_safe_ident_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     assert sql_util.typed_table_sql() == "normalized"
 
 
+def test_warehouse_row_count_missing_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Conn:
+        def execute(self, *_args, **_kwargs):
+            raise AssertionError("COUNT не должен вызываться для отсутствующей таблицы")
+
+    class _Inspector:
+        def get_table_names(self):
+            return ["connection", "destination"]
+
+    monkeypatch.setattr(sql_util, "warehouse_table_sql", lambda: "normalized")
+    monkeypatch.setattr(sql_util, "inspect", lambda _conn: _Inspector())
+    assert sql_util.warehouse_row_count(_Conn()) == 0
+
+
 def test_request_audit_ip_and_user_agent() -> None:
     scope = {
         "type": "http",

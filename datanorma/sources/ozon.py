@@ -10,6 +10,7 @@ from typing import Any, Iterator
 import httpx
 
 from datanorma.config import OZON_API_BASE, get_settings
+from datanorma.sources.source_config import cfg_int, cfg_str
 from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
 from datanorma.ingest.cursor_filter import filter_incremental_postings
 from datanorma.resources.paths import DataPathsResource
@@ -59,18 +60,28 @@ def _fetch_postings_api(client_id: str, api_key: str, limit: int) -> list[dict[s
 class OzonSource(BaseSource):
     integration_code = "ozon"
 
-    def __init__(self, paths: DataPathsResource) -> None:
+    def __init__(self, paths: DataPathsResource, *, source_config: dict[str, Any] | None = None) -> None:
         self._paths = paths
+        self._source_config = source_config or {}
         self._settings = get_settings()
         self._last_ingest_mode: str = "fixture"
+
+    def _client_id(self) -> str:
+        return cfg_str(self._source_config, "client_id", self._settings.ozon_client_id)
+
+    def _api_key(self) -> str:
+        return cfg_str(self._source_config, "api_key", self._settings.ozon_api_key)
+
+    def _fetch_limit(self) -> int:
+        return cfg_int(self._source_config, "fetch_limit", self._settings.ozon_fetch_limit)
 
     @property
     def last_ingest_mode(self) -> str:
         return self._last_ingest_mode
 
     def check(self) -> SourceCheckResult:
-        client_id = self._settings.ozon_client_id.strip()
-        api_key = self._settings.ozon_api_key.strip()
+        client_id = self._client_id()
+        api_key = self._api_key()
         if not client_id or not api_key:
             p = self._paths.sample_file("ozon_postings.json")
             if p.is_file():
@@ -81,7 +92,7 @@ class OzonSource(BaseSource):
                 )
             return SourceCheckResult(ok=False, message="Нет OZON_CLIENT_ID/OZON_API_KEY и нет sample.", details={})
         try:
-            _fetch_postings_api(client_id, api_key, limit=min(self._settings.ozon_fetch_limit, 5))
+            _fetch_postings_api(client_id, api_key, limit=min(self._fetch_limit(), 5))
             return SourceCheckResult(
                 ok=True,
                 message="Ozon Seller API отвечает (posting/fbs/list).",
@@ -96,11 +107,11 @@ class OzonSource(BaseSource):
 
     def discover(self) -> IngestCatalog:
         postings: list[dict[str, Any]] = []
-        client_id = self._settings.ozon_client_id.strip()
-        api_key = self._settings.ozon_api_key.strip()
+        client_id = self._client_id()
+        api_key = self._api_key()
         if client_id and api_key:
             try:
-                postings = _fetch_postings_api(client_id, api_key, limit=min(self._settings.ozon_fetch_limit, 50))
+                postings = _fetch_postings_api(client_id, api_key, limit=min(self._fetch_limit(), 50))
             except Exception:
                 postings = _load_fixture(self._paths)
         else:
@@ -126,9 +137,9 @@ class OzonSource(BaseSource):
         if stream_name != "postings":
             raise ValueError(f"Ozon: неизвестный stream {stream_name!r}, ожидается postings")
 
-        client_id = self._settings.ozon_client_id.strip()
-        api_key = self._settings.ozon_api_key.strip()
-        limit = self._settings.ozon_fetch_limit
+        client_id = self._client_id()
+        api_key = self._api_key()
+        limit = self._fetch_limit()
 
         if client_id and api_key:
             try:

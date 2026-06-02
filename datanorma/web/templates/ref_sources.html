@@ -1,7 +1,0 @@
-{% extends "base.html" %}
-{% block title %}Источники dim{% endblock %}
-{% block main %}
-<h1>Справочник источников (dim_source_system)</h1>
-<table><thead><tr><th>Код</th><th>Название</th><th>Описание</th></tr></thead>
-<tbody>{% for r in rows %}<tr><td>{{ r.code }}</td><td>{{ r.name }}</td><td>{{ r.description or "" }}</td></tr>{% endfor %}</tbody></table>
-{% endblock %}

@@ -1,28 +1,31 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { PageHeader } from "@/components/page-header";
 import { LinkAsButton } from "@/components/link-as-button";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { DestinationConfigForm } from "@/components/destination-config-form";
 import { createEltDestination, postEltDestinationCheck } from "@/lib/api-elt";
 import { fetchWorkspaces } from "@/lib/api-datanorma";
-import { ApiError } from "@/lib/api-client";
+import { formatApiErrorMessage } from "@/lib/api-client";
 import { queryKeys } from "@/lib/query-keys";
-
-const CONNECTORS = [
-  { value: "postgres", label: "PostgreSQL" },
-  { value: "csv", label: "CSV (файл)" },
-  { value: "xlsx", label: "Excel (.xlsx)" },
-  { value: "clickhouse", label: "ClickHouse (HTTP)" },
-] as const;
+import {
+  defaultDestinationConfig,
+  destinationConfigToRecord,
+  validateDestinationConfig,
+  type DestinationConfigFormState,
+  type DestinationConnectorCode,
+} from "@/lib/destination-config";
 
 export function DestinationNewPage() {
   const [, setLocation] = useLocation();
   const queryClient = useQueryClient();
   const [name, setName] = useState("");
-  const [connector, setConnector] = useState<string>("postgres");
-  const [configText, setConfigText] = useState("{}");
+  const [connector, setConnector] = useState<DestinationConnectorCode>("postgres");
+  const [configState, setConfigState] = useState<DestinationConfigFormState>(() =>
+    defaultDestinationConfig("postgres"),
+  );
   const [error, setError] = useState<string | null>(null);
   const [checkMsg, setCheckMsg] = useState<string | null>(null);
   const [createdId, setCreatedId] = useState<number | null>(null);
@@ -33,19 +36,20 @@ export function DestinationNewPage() {
   });
   const workspaceCode = wsQuery.data?.items?.[0]?.workspace_code ?? "main";
 
+  useEffect(() => {
+    setConfigState(defaultDestinationConfig(connector));
+  }, [connector]);
+
+  const configValidationError = useMemo(() => validateDestinationConfig(configState), [configState]);
+
   const createMut = useMutation({
     mutationFn: () => {
-      let config: Record<string, unknown> = {};
-      try {
-        config = JSON.parse(configText || "{}") as Record<string, unknown>;
-      } catch {
-        throw new Error("Некорректный JSON в конфигурации");
-      }
+      if (configValidationError) throw new Error(configValidationError);
       return createEltDestination({
         workspace_code: workspaceCode,
         name: name.trim() || "Приёмник",
         connector_code: connector,
-        config,
+        config: destinationConfigToRecord(configState),
       });
     },
     onSuccess: (data) => {
@@ -54,9 +58,7 @@ export function DestinationNewPage() {
       void queryClient.invalidateQueries({ queryKey: queryKeys.destinations.list() });
     },
     onError: (e: unknown) => {
-      if (e instanceof ApiError) setError(e.message);
-      else if (e instanceof Error) setError(e.message);
-      else setError("Ошибка сохранения");
+      setError(formatApiErrorMessage(e, "Ошибка сохранения"));
     },
   });
 
@@ -71,7 +73,7 @@ export function DestinationNewPage() {
       setCheckMsg(`${r.ok ? "Ок" : "Ошибка"}: ${r.message}`);
     },
     onError: (e: unknown) => {
-      setCheckMsg(e instanceof Error ? e.message : "Ошибка проверки");
+      setCheckMsg(formatApiErrorMessage(e, "Ошибка проверки"));
     },
   });
 
@@ -79,7 +81,7 @@ export function DestinationNewPage() {
     <div className="p-4">
       <PageHeader
         title="Новый приёмник"
-        description="PostgreSQL, ClickHouse, CSV или XLSX — конфигурация в JSON"
+        description="PostgreSQL, ClickHouse, CSV или Excel — параметры через форму"
         breadcrumbs="Интеграции / Приёмники / Новый"
       />
       <div className="max-w-xl space-y-3" data-testid="form-new-destination">
@@ -89,37 +91,14 @@ export function DestinationNewPage() {
           onChange={(e) => setName(e.target.value)}
           data-testid="input-destination-name"
         />
-        <div>
-          <label className="mb-1 block text-sm font-medium" htmlFor="select-destination-connector">
-            Тип приёмника
-          </label>
-          <select
-            id="select-destination-connector"
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-            value={connector}
-            onChange={(e) => setConnector(e.target.value)}
-            data-testid="select-destination-connector"
-          >
-            {CONNECTORS.map((c) => (
-              <option key={c.value} value={c.value}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div>
-          <label className="mb-1 block text-sm text-muted-foreground" htmlFor="textarea-destination-config">
-            Config (JSON): для postgres — url, schema, table; csv/xlsx — path; clickhouse — host, port, database,
-            table, user, password
-          </label>
-          <textarea
-            id="textarea-destination-config"
-            className="min-h-[140px] w-full rounded-md border bg-background p-2 font-mono text-sm"
-            value={configText}
-            onChange={(e) => setConfigText(e.target.value)}
-            data-testid="textarea-destination-config"
-          />
-        </div>
+        <DestinationConfigForm
+          connector={connector}
+          value={configState}
+          onChange={setConfigState}
+          onConnectorChange={setConnector}
+          showConnectorSelect
+          idPrefix="destination-new"
+        />
         {error ? (
           <p className="text-sm text-destructive" data-testid="error-destination-save">
             {error}
@@ -147,7 +126,7 @@ export function DestinationNewPage() {
           <Button
             type="button"
             onClick={() => createMut.mutate()}
-            disabled={createMut.isPending || createdId != null}
+            disabled={createMut.isPending || createdId != null || Boolean(configValidationError)}
             data-testid="button-save-destination"
           >
             Сохранить

@@ -4,13 +4,13 @@ import { LogViewer } from "@/components/log-viewer";
 import { PageHeader } from "@/components/page-header";
 import { useConnectionFromPath } from "@/hooks/use-connection-from-path";
 import { LinkAsButton } from "@/components/link-as-button";
-import { fetchV1Syncs, syncRunLogLines } from "@/lib/api-datanorma";
+import { fetchV1Syncs, syncRunLogLines, syncRunMatchesEltConnection } from "@/lib/api-datanorma";
 import { queryKeys } from "@/lib/query-keys";
 
 function buildLogsFromSyncs(items: Awaited<ReturnType<typeof fetchV1Syncs>>["items"], connectionId: string): string[] {
   const lines: string[] = [];
   const forConn = items
-    .filter((s) => s.connection_id != null && String(s.connection_id) === connectionId)
+    .filter((s) => syncRunMatchesEltConnection(s, connectionId))
     .sort((a, b) => {
       const ta = a.started_at ? new Date(a.started_at).getTime() : 0;
       const tb = b.started_at ? new Date(b.started_at).getTime() : 0;

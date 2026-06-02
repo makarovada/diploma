@@ -16,6 +16,7 @@ from datanorma.checks import data_quality
 from datanorma.resources.database import PostgresResource
 from datanorma.resources.paths import DataPathsResource
 from datanorma.schedules.alerts import failed_sync_alert_sensor
+from datanorma.schedules.connection_cron_sensor import connection_cron_sensor
 from datanorma.schedules.daily_schedule import daily_job, daily_schedule
 
 all_assets = dg.load_assets_from_modules(
@@ -32,5 +33,5 @@ defs = dg.Definitions(
     },
     jobs=[daily_job],
     schedules=[daily_schedule],
-    sensors=[failed_sync_alert_sensor],
+    sensors=[failed_sync_alert_sensor, connection_cron_sensor],
 )

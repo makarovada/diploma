@@ -9,7 +9,6 @@ INTEGRATION_HINTS = (
     "warehouse",
     "raw_staging",
     "sync_runs",
-    "phase_c_jinja_routes",
     "destination_write",
 )
 

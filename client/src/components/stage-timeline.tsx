@@ -15,7 +15,8 @@ export function StageTimeline({ status, currentStage }: { status: Status; curren
   const statusIcon = (idx: number) => {
     if (status === "failed" && idx === activeIdx) return <XCircle className="h-4 w-4 text-destructive" />;
     if (status === "running" && idx === activeIdx) return <Loader2 className="h-4 w-4 animate-spin text-info" />;
-    if ((status === "success" || status === "partial") && idx <= activeIdx) return <CheckCircle2 className="h-4 w-4 text-success" />;
+    if (status === "partial" && idx <= activeIdx) return <CheckCircle2 className="h-4 w-4 text-warning" />;
+    if (status === "success" && idx <= activeIdx) return <CheckCircle2 className="h-4 w-4 text-success" />;
     if (status === "failed" && idx < activeIdx) return <CheckCircle2 className="h-4 w-4 text-success" />;
     return <Circle className="h-4 w-4 text-muted-foreground" />;
   };

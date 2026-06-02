@@ -12,6 +12,8 @@ COPY dbt /app/dbt
 RUN pip wheel --no-cache-dir --wheel-dir /tmp/wheels .
 
 FROM node:20-alpine AS frontend-builder
+ARG VITE_BASE=/ui/
+ENV VITE_BASE=$VITE_BASE
 WORKDIR /frontend
 COPY client/package*.json /frontend/
 RUN npm install
@@ -32,6 +34,7 @@ COPY datanorma /app/datanorma
 COPY alembic /app/alembic
 COPY alembic.ini /app/alembic.ini
 COPY dbt /app/dbt
+COPY data/samples /app/data/samples
 COPY dagster_workspace.yaml /app/dagster_workspace.yaml
 COPY --from=frontend-builder /frontend/dist /app/client/dist
 COPY docker/entrypoint.py /app/docker/entrypoint.py

@@ -4,6 +4,7 @@ import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { fetchV1ConnectorCatalogItem } from "@/lib/api-datanorma";
 import type { ConnectorCatalogItem } from "@/lib/types";
 
 function mapRole(v: string): ConnectorCatalogItem["role"] {
@@ -17,8 +18,7 @@ export function ConnectorDetailPage() {
   const query = useQuery({
     queryKey: ["connector-detail", connectorId],
     queryFn: async () => {
-      const resp = await fetch(`/api/v1/connectors/catalog/${encodeURIComponent(connectorId)}`);
-      const body = (await resp.json()) as { item?: Record<string, unknown> };
+      const body = await fetchV1ConnectorCatalogItem(connectorId);
       const item = body.item ?? {};
       return {
         id: String(item.code ?? ""),
@@ -36,7 +36,7 @@ export function ConnectorDetailPage() {
   });
   const c = query.data;
 
-  if (query.isPending) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
+  if (query.isLoading) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
   if (!c) {
     return (
       <div className="p-4" data-testid="state-not-found-connector">

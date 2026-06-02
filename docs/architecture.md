@@ -20,7 +20,7 @@ DataNorma использует Airbyte-like слоистую архитекту�
 ## Компоненты
 
 - Orchestration: Dagster (`datanorma/definitions.py`, assets в `datanorma/assets/`).
-- API и UI: FastAPI (`datanorma/web/`), React SPA (`client/`), Jinja fallback (`/app/*`).
+- API и UI: FastAPI (`datanorma/web/`), React SPA (`client/`), раздача собранного фронта под `/ui/`.
 - Хранилище: PostgreSQL + Alembic миграции.
 - Семантический слой: dbt-проект в `dbt/`.
 
@@ -30,3 +30,14 @@ DataNorma использует Airbyte-like слоистую архитекту�
 - `canonical_*` слой удалён из runtime-контура и миграций;
 - нормализация выполняется по per-stream правилам (`StreamRules`/`ColumnRule`);
 - бизнес-агрегации выполняются только в `dbt` моделях.
+
+## Мастер подключения (UX)
+
+Пользователь настраивает **колонки и типы**, а не «потоки» Airbyte:
+
+- **flat**-источники (Google Sheets, Ozon, 1C): одна схема, таблица полей без выбора сущности.
+- **entities**-источники (Wildberries, amoCRM, …): чекбоксы сущностей + колонка «Сущность» в маппинге.
+- `sync_mode` / `cursor_field` задаются автоматически из `connector_schema_meta` и не показываются в мастере.
+- Правила сохраняются в `connection.wizard_meta`, `connection_stream_rules`, `connection_column_rule`; синк применяет `cast_row` при наличии правил.
+
+Внутренний контракт коннекторов (`discover` / `read` по `stream_name`) сохранён для совместимости.

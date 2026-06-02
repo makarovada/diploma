@@ -1,20 +1,26 @@
 /**
  * REST API v1: доменные source / destination / connection (Фаза 4).
  */
-import { apiGetJson, apiPatchJson, apiPostJson, type ApiRequestInit } from "@/lib/api-client";
+import { apiDelete, apiGetJson, apiPatchJson, apiPostJson, type ApiRequestInit } from "@/lib/api-client";
 import type {
   EltCheckResponseDto,
   EltConnectionCreatePayload,
   EltConnectionDetailDto,
+  EltConnectionPatchPayload,
   EltConnectionTriggerResponseDto,
   EltDestinationCreatePayload,
   EltDestinationItemDto,
   EltDiscoverResponseDto,
+  EltSourceCreatePayload,
   EltSourceItemDto,
 } from "@/lib/api-types";
 
 function ws(workspaceCode: string): string {
   return `workspace_code=${encodeURIComponent(workspaceCode)}`;
+}
+
+export function createEltSource(body: EltSourceCreatePayload, init?: ApiRequestInit) {
+  return apiPostJson<{ item: EltSourceItemDto }, EltSourceCreatePayload>("/api/v1/sources", body, init);
 }
 
 export function fetchEltSources(workspaceCode = "main", init?: ApiRequestInit) {
@@ -31,6 +37,10 @@ export function patchEltSource(
   init?: ApiRequestInit,
 ) {
   return apiPatchJson<{ item: EltSourceItemDto }, typeof body>(`/api/v1/sources/${sourceId}`, body, init);
+}
+
+export function deleteEltSource(sourceId: number, workspaceCode = "main", init?: ApiRequestInit) {
+  return apiDelete(`/api/v1/sources/${sourceId}?${ws(workspaceCode)}`, init);
 }
 
 export function postEltSourceCheck(sourceId: number, workspaceCode = "main", init?: ApiRequestInit) {
@@ -73,6 +83,24 @@ export function createEltDestination(body: EltDestinationCreatePayload, init?: A
   );
 }
 
+export function patchEltDestination(
+  destinationId: number,
+  body: {
+    workspace_code?: string;
+    name?: string | null;
+    connector_code?: string | null;
+    config?: Record<string, unknown> | null;
+    status?: string | null;
+  },
+  init?: ApiRequestInit,
+) {
+  return apiPatchJson<{ item: EltDestinationItemDto }, typeof body>(`/api/v1/destinations/${destinationId}`, body, init);
+}
+
+export function deleteEltDestination(destinationId: number, workspaceCode = "main", init?: ApiRequestInit) {
+  return apiDelete(`/api/v1/destinations/${destinationId}?${ws(workspaceCode)}`, init);
+}
+
 export function postEltDestinationWrite(
   destinationId: number,
   body: {
@@ -94,10 +122,34 @@ export function createEltConnection(body: EltConnectionCreatePayload, init?: Api
   return apiPostJson<{ item: EltConnectionDetailDto }, EltConnectionCreatePayload>("/api/v1/connections", body, init);
 }
 
+export function fetchEltConnections(workspaceCode = "main", init?: ApiRequestInit) {
+  return apiGetJson<{ items: EltConnectionDetailDto[] }>(`/api/v1/connections?${ws(workspaceCode)}`, init);
+}
+
+export function fetchEltConnection(connectionId: number, workspaceCode = "main", init?: ApiRequestInit) {
+  return apiGetJson<{ item: EltConnectionDetailDto }>(`/api/v1/connections/${connectionId}?${ws(workspaceCode)}`, init);
+}
+
+export function patchEltConnection(
+  connectionId: number,
+  body: EltConnectionPatchPayload,
+  init?: ApiRequestInit,
+) {
+  return apiPatchJson<{ item: EltConnectionDetailDto }, EltConnectionPatchPayload>(
+    `/api/v1/connections/${connectionId}`,
+    body,
+    init,
+  );
+}
+
 export function triggerEltConnection(connectionId: number, workspaceCode = "main", init?: ApiRequestInit) {
   return apiPostJson<EltConnectionTriggerResponseDto, Record<string, never>>(
     `/api/v1/connections/${connectionId}/trigger?${ws(workspaceCode)}`,
     {},
     init,
   );
+}
+
+export function deleteEltConnection(connectionId: number, workspaceCode = "main", init?: ApiRequestInit) {
+  return apiDelete(`/api/v1/connections/${connectionId}?${ws(workspaceCode)}`, init);
 }

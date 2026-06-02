@@ -1,31 +1,28 @@
-"""Коннектор Яндекс Метрика (Management API + sample): check / discover / read."""
+"""Коннектор Яндекс Метрика: Management API (check) + Statistics Reporting API (discover/read)."""
 
 from __future__ import annotations
 
-import json
 import logging
+import re
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 import httpx
 
 from datanorma.config import get_settings
 from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
+from datanorma.http.client import request_json
 from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
 from datanorma.sources.schema_inference import records_to_json_schema
 from datanorma.normalization.default_stream_rules import default_stream_rules_from_json_schema
+from datanorma.sources.source_config import cfg_int, cfg_str
 
 _log = logging.getLogger(__name__)
 
 METRIKA_MANAGEMENT_BASE = "https://api-metrika.yandex.net/management/v1"
-
-STREAM_FIXTURE_NAMES: dict[str, str] = {
-    "summary": "yandex_metrika_summary.json",
-    "visits": "yandex_metrika_visits.json",
-    "hits": "yandex_metrika_hits.json",
-    "goals_reaches": "yandex_metrika_goals_reaches.json",
-}
+STAT_V1_DATA = "https://api-metrika.yandex.net/stat/v1/data"
 
 STREAM_CURSOR_FIELDS: dict[str, list[str]] = {
     "summary": ["date"],
@@ -33,79 +30,228 @@ STREAM_CURSOR_FIELDS: dict[str, list[str]] = {
     "hits": ["date_time"],
     "goals_reaches": ["reach_datetime"],
 }
+# Отчёты строятся по ym:s:date (агрегаты по дню); date_time в строках — производное поле для курсора.
 
 
-def _load_fixture_rows(paths: DataPathsResource, stream: str) -> list[dict[str, Any]]:
-    name = STREAM_FIXTURE_NAMES.get(stream)
-    if not name:
-        return []
-    path = paths.sample_file(name)
-    if not path.is_file():
-        return []
-    with path.open(encoding="utf-8") as f:
-        data = json.load(f)
-    if isinstance(data, list):
-        return [x for x in data if isinstance(x, dict)]
-    if isinstance(data, dict):
-        inner = data.get("data") or data.get("rows") or data.get("records")
-        if isinstance(inner, list):
-            return [x for x in inner if isinstance(x, dict)]
-    return []
+def _sanitize_key(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_]+", "_", name.replace(":", "_")).strip("_").lower() or "dim"
 
 
-def _check_counter_oauth(token: str, counter_id: str) -> SourceCheckResult:
-    url = f"{METRIKA_MANAGEMENT_BASE}/counter/{counter_id.strip()}"
-    headers = {"Authorization": f"OAuth {token.strip()}"}
-    try:
-        with httpx.Client(timeout=30.0) as client:
-            r = client.get(url, headers=headers)
-        ok = r.status_code == 200
-        return SourceCheckResult(
-            ok=ok,
-            message=f"Management API счётчика: HTTP {r.status_code}.",
-            details={"mode": "yandex_metrika_api", "counter_id": counter_id.strip(), "status": r.status_code},
-        )
-    except Exception as exc:
-        return SourceCheckResult(
-            ok=False,
-            message=f"Yandex Metrika API: {exc}",
-            details={"mode": "yandex_metrika_api", "counter_id": counter_id.strip()},
-        )
+def _parse_report_rows(body: dict[str, Any]) -> list[dict[str, Any]]:
+    """Преобразует ответ stat/v1/data в плоские dict (имена полей из метрик/измерений)."""
+    query = body.get("query") if isinstance(body.get("query"), dict) else {}
+    dim_meta = query.get("dimensions") or []
+    metric_meta = query.get("metrics") or []
+    dim_names = []
+    for d in dim_meta:
+        if isinstance(d, dict) and d.get("name"):
+            dim_names.append(str(d["name"]))
+    metric_names = [str(m.get("name", f"m{i}")) for i, m in enumerate(metric_meta) if isinstance(m, dict)]
+
+    rows_out: list[dict[str, Any]] = []
+    for item in body.get("data") or []:
+        if not isinstance(item, dict):
+            continue
+        row: dict[str, Any] = {}
+        dims = item.get("dimensions") or []
+        for i, d in enumerate(dims):
+            key = _sanitize_key(dim_names[i]) if i < len(dim_names) else f"dim_{i}"
+            if isinstance(d, dict):
+                row[key] = d.get("name") or d.get("id")
+            else:
+                row[key] = d
+        mets = item.get("metrics")
+        if isinstance(mets, list):
+            for j, name in enumerate(metric_names):
+                val = mets[j] if j < len(mets) else None
+                mk = _sanitize_key(name)
+                row[mk] = val
+        elif isinstance(mets, (int, float, str)):
+            mk = _sanitize_key(metric_names[0]) if metric_names else "metric_0"
+            row[mk] = mets
+        rows_out.append(row)
+    return rows_out
 
 
 class YandexMetrikaSource(BaseSource):
     integration_code = "yandex_metrika"
 
-    def __init__(self, paths: DataPathsResource) -> None:
+    def __init__(self, paths: DataPathsResource, *, source_config: dict[str, Any] | None = None) -> None:
         self._paths = paths
+        self._source_config = source_config or {}
         self._settings = get_settings()
 
+    def _oauth_token(self) -> str:
+        return cfg_str(self._source_config, "oauth_token", self._settings.yandex_metrika_oauth_token)
+
+    def _counter_id(self) -> str:
+        return cfg_str(self._source_config, "counter_id", self._settings.yandex_metrika_counter_id)
+
+    def _lookback_days(self) -> int:
+        d = cfg_int(self._source_config, "lookback_days", 30)
+        return max(1, min(d, 365))
+
+    def _date_range(self) -> tuple[str, str]:
+        """date1/date2 в формате YYYY-MM-DD."""
+        df = cfg_str(self._source_config, "date_from")
+        dt = cfg_str(self._source_config, "date_to")
+        if df and dt:
+            return df[:10], dt[:10]
+        end = datetime.now(timezone.utc).date()
+        start = end - timedelta(days=self._lookback_days())
+        return start.isoformat(), end.isoformat()
+
+    def _stat_report(
+        self,
+        *,
+        dimensions: str,
+        metrics: str,
+        preset: str | None = None,
+    ) -> list[dict[str, Any]]:
+        token = self._oauth_token()
+        cid = self._counter_id()
+        if not token or not cid:
+            raise ValueError("Yandex Metrika: нужны oauth_token и counter_id.")
+        date1, date2 = self._date_range()
+        params: dict[str, Any] = {
+            "ids": cid,
+            "date1": date1,
+            "date2": date2,
+            "dimensions": dimensions,
+            "metrics": metrics,
+            "accuracy": "full",
+            "limit": 10000,
+        }
+        if preset:
+            params["preset"] = preset
+        status, body = request_json("GET", STAT_V1_DATA, headers={"Authorization": f"OAuth {token}"}, params=params)
+        if status >= 400:
+            raise RuntimeError(f"Yandex Metrika stat/v1/data HTTP {status}: {body!r}")
+        if not isinstance(body, dict):
+            return []
+        return _parse_report_rows(body)
+
+    def _stream_report_spec(self, stream_name: str) -> tuple[str, str]:
+        if stream_name == "summary":
+            return (
+                "ym:s:date",
+                "ym:s:visits,ym:s:users,ym:s:bounceRate,ym:s:pageviews",
+            )
+        if stream_name == "visits":
+            return (
+                "ym:s:date",
+                "ym:s:visits,ym:s:newUsers",
+            )
+        if stream_name == "hits":
+            return (
+                "ym:s:date",
+                "ym:s:pageviews",
+            )
+        if stream_name == "goals_reaches":
+            return (
+                "ym:s:date",
+                "ym:s:goalReaches",
+            )
+        raise ValueError(f"Yandex Metrika: неизвестный stream {stream_name!r}")
+
+    def _normalize_summary_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = []
+        for r in rows:
+            date_val = r.get("ym_s_date") or r.get("dim_0")
+            out.append(
+                {
+                    "date": str(date_val)[:10] if date_val else "",
+                    "visits": r.get("ym_s_visits"),
+                    "users": r.get("ym_s_users"),
+                    "bounce_rate": r.get("ym_s_bouncerate"),
+                    "pageviews": r.get("ym_s_pageviews"),
+                }
+            )
+        return out
+
+    def _normalize_visits_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = []
+        for r in rows:
+            d = r.get("ym_s_date") or r.get("dim_0")
+            ds = str(d)[:10] if d else ""
+            out.append(
+                {
+                    "date_time": f"{ds}T12:00:00+03:00" if ds else "",
+                    "visits": r.get("ym_s_visits"),
+                    "new_users": r.get("ym_s_newusers"),
+                }
+            )
+        return out
+
+    def _normalize_hits_rows(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = []
+        for r in rows:
+            d = r.get("ym_s_date") or r.get("dim_0")
+            ds = str(d)[:10] if d else ""
+            out.append(
+                {
+                    "date_time": f"{ds}T12:00:00+03:00" if ds else "",
+                    "pageviews": r.get("ym_s_pageviews"),
+                }
+            )
+        return out
+
+    def _normalize_goals(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = []
+        for r in rows:
+            d = r.get("ym_s_date")
+            out.append(
+                {
+                    "reach_datetime": str(d) if d else "",
+                    "goal_reaches": r.get("ym_s_goalreaches"),
+                }
+            )
+        return out
+
+    def _normalize_stream(self, stream_name: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        if stream_name == "summary":
+            return self._normalize_summary_rows(rows)
+        if stream_name == "visits":
+            return self._normalize_visits_rows(rows)
+        if stream_name == "hits":
+            return self._normalize_hits_rows(rows)
+        if stream_name == "goals_reaches":
+            return self._normalize_goals(rows)
+        return rows
+
     def check(self) -> SourceCheckResult:
-        token = (self._settings.yandex_metrika_oauth_token or "").strip()
-        counter_id = (self._settings.yandex_metrika_counter_id or "").strip()
-        if token and counter_id:
-            return _check_counter_oauth(token, counter_id)
-        missing = []
-        for stream in STREAM_FIXTURE_NAMES:
-            rows = _load_fixture_rows(self._paths, stream)
-            if not rows:
-                missing.append(stream)
-        if missing:
+        token = self._oauth_token()
+        counter_id = self._counter_id()
+        if not token or not counter_id:
             return SourceCheckResult(
                 ok=False,
-                message="Нет YANDEX_METRIKA_OAUTH_TOKEN/YANDEX_METRIKA_COUNTER_ID и неполный набор sample-файлов.",
-                details={"mode": "fixture", "missing_streams": missing},
+                message="Укажите oauth_token и counter_id в конфигурации источника.",
+                details={"mode": "missing_credentials"},
             )
-        return SourceCheckResult(
-            ok=True,
-            message="Режим без OAuth: доступны sample для discover/read.",
-            details={"mode": "fixture"},
-        )
+        url = f"{METRIKA_MANAGEMENT_BASE}/counter/{counter_id.strip()}"
+        headers = {"Authorization": f"OAuth {token.strip()}"}
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                r = client.get(url, headers=headers)
+            ok = r.status_code == 200
+            return SourceCheckResult(
+                ok=ok,
+                message=f"Management API счётчика: HTTP {r.status_code}.",
+                details={"mode": "yandex_metrika_api", "counter_id": counter_id.strip(), "status": r.status_code},
+            )
+        except Exception as exc:
+            return SourceCheckResult(
+                ok=False,
+                message=f"Yandex Metrika API: {exc}",
+                details={"mode": "yandex_metrika_api", "counter_id": counter_id.strip()},
+            )
 
     def discover(self) -> IngestCatalog:
         streams_out = []
-        for stream_name in STREAM_FIXTURE_NAMES:
-            rows = _load_fixture_rows(self._paths, stream_name)
+        for stream_name in STREAM_CURSOR_FIELDS:
+            dims, mets = self._stream_report_spec(stream_name)
+            raw = self._stat_report(dimensions=dims, metrics=mets)
+            rows = self._normalize_stream(stream_name, raw)[:200]
             schema = records_to_json_schema(rows) if rows else {"type": "object", "properties": {}}
             streams_out.append(
                 self.ingest_stream(
@@ -126,12 +272,11 @@ class YandexMetrikaSource(BaseSource):
         cursor_field: str | None = None,
         last_cursor: str | None = None,
     ) -> Iterator[dict[str, Any]]:
-        if stream_name not in STREAM_FIXTURE_NAMES:
+        if stream_name not in STREAM_CURSOR_FIELDS:
             raise ValueError(f"Yandex Metrika: неизвестный stream {stream_name!r}")
-        rows = _load_fixture_rows(self._paths, stream_name)
-        if not rows:
-            _log.warning("Yandex Metrika: пустая фикстура для %s", stream_name)
-            return
+        dims, mets = self._stream_report_spec(stream_name)
+        raw = self._stat_report(dimensions=dims, metrics=mets)
+        rows = self._normalize_stream(stream_name, raw)
         eff_cursor = cursor_field
         if not eff_cursor and STREAM_CURSOR_FIELDS.get(stream_name):
             eff_cursor = STREAM_CURSOR_FIELDS[stream_name][0]
@@ -143,7 +288,7 @@ class YandexMetrikaSource(BaseSource):
         )
         yield from filtered
 
-    def default_stream_rules(self, stream_name: str, json_schema: dict) -> "StreamRules":
+    def default_stream_rules(self, stream_name: str, json_schema: dict):
         cursor_fields = STREAM_CURSOR_FIELDS.get(stream_name) or []
         cursor_field = cursor_fields[0] if cursor_fields else None
         return default_stream_rules_from_json_schema(

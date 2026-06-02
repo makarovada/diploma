@@ -42,7 +42,7 @@
 ## 3. Проверьте source в UI и API
 
 Минимальные проверки:
-- UI: `/app/sources/new` (check + discover);
+- UI: мастер нового подключения в `/ui/` (check + discover);
 - API: потоки `sync_state` через `/api/v1/sync-streams`; доменные connections — `/api/v1/connections`.
 
 Ожидаемо:

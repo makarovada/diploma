@@ -524,6 +524,8 @@ DATANORMA_CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 
 Закрепить React как основной продуктовый UI, Jinja как временный fallback/admin.
 
+*(В текущем репозитории Jinja-контур `/app/*` удалён; остаётся React SPA под `/ui/`.)*
+
 ### Задачи
 
 #### Задача 2.1. Обновить документацию
@@ -543,12 +545,9 @@ DATANORMA_CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 - либо через отдельный nginx в compose;
 - для диплома проще через FastAPI static.
 
-Нужно не сломать существующий Jinja `/app/*`.
-
 Вариант маршрутов:
 
 - `/` → React SPA;
-- `/app/*` → Jinja legacy UI;
 - `/api/*` → API;
 - `/docs` или `/api-docs` → API docs.
 
@@ -565,7 +564,6 @@ DATANORMA_CORS_ORIGINS=http://localhost:5173,http://localhost:8000
 ### Acceptance criteria
 
 - React UI открывается как основной интерфейс.
-- Jinja `/app/*` продолжает работать.
 - Login route работает в React.
 - Protected pages не открываются без auth.
 

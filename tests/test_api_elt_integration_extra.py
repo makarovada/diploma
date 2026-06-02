@@ -131,6 +131,7 @@ def test_connections_get_patch_delete_not_found(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(elt_mod, "_wid", lambda *_a, **_k: 1)
     monkeypatch.setattr(elt_mod, "get_connection", lambda *_a, **_k: None)
     monkeypatch.setattr(elt_mod, "update_connection_row", lambda *_a, **_k: None)
+    monkeypatch.setattr(elt_mod, "patch_connection_row", lambda *_a, **_k: None)
     monkeypatch.setattr(elt_mod, "delete_connection_row", lambda *_a, **_k: False)
     client, _ = _client()
     with client:
@@ -140,3 +141,41 @@ def test_connections_get_patch_delete_not_found(monkeypatch: pytest.MonkeyPatch)
     assert g.status_code == 404
     assert p.status_code == 404
     assert d.status_code == 404
+
+
+def test_connections_trigger_elt_inline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(elt_mod, "_wid", lambda *_a, **_k: 1)
+    conn = MagicMock()
+    conn.execute.return_value.mappings.return_value.first.return_value = {"id": 5, "source_id": 10}
+    monkeypatch.setattr(
+        elt_mod,
+        "get_source",
+        lambda *_a, **_k: {"id": 10, "connector_code": "wildberries", "config_encrypted": "{}"},
+    )
+    monkeypatch.setattr(
+        elt_mod,
+        "create_sync_run",
+        lambda *_a, **_k: {"id": 100, "status": "queued"},
+    )
+    monkeypatch.setattr(
+        elt_mod,
+        "mark_sync_run_started_inline",
+        lambda *_a, **_k: {"id": 100, "status": "running"},
+    )
+    monkeypatch.setattr(
+        elt_mod,
+        "run_connection_sync",
+        lambda *_a, **_k: {"total_rows_written": 2, "streams": []},
+    )
+    monkeypatch.setattr(
+        elt_mod,
+        "mark_sync_run_success",
+        lambda *_a, **_k: {"id": 100, "status": "success"},
+    )
+    client, _ = _client(conn)
+    with client:
+        r = client.post("/api/v1/connections/5/trigger")
+    assert r.status_code == 202
+    body = r.json()
+    assert body["run_id"] == 100
+    assert body["summary"]["total_rows_written"] == 2

@@ -14,7 +14,7 @@
 | **Incremental state** | Нативный state-протокол и workers | `sync_state` в PostgreSQL + cursor filtering в pipeline |
 | **Нормализация** | Typing/Dedup + dbt-пайплайны | Кастомная бизнес-нормализация (MSK datetime, ЦБ РФ, fuzzy, units) |
 | **Оркестрация** | Собственный runtime | Dagster assets/schedules/checks/sensors |
-| **UI/API** | Зрелая product-консоль | FastAPI + Jinja2 UI (`/app/*`) + REST (`/api/*`, `/api/v1/*`) |
+| **UI/API** | Зрелая product-консоль | FastAPI + React SPA (`/ui/`) + REST (`/api/*`, `/api/v1/*`) |
 | **RBAC/мультитенантность** | Развитые enterprise-сценарии | Роли и матрица операций есть; мультитенантность реализована базовым контуром |
 | **Расширяемость** | Высокая, через CDK/коннекторы | Есть source framework и YAML builder, но ecosystem пока ограничен |
 

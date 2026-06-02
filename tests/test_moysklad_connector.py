@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -10,39 +10,43 @@ from datanorma.sources.registry import create_source
 pytestmark = pytest.mark.unit
 
 
-def _write_samples(root: Path) -> None:
-    samples = root / "data" / "samples"
-    samples.mkdir(parents=True, exist_ok=True)
-    repo = Path(__file__).resolve().parent.parent / "data" / "samples"
-    for fname in ("moysklad_demand.json", "moysklad_customerorder.json", "moysklad_product.json", "moysklad_counterparty.json"):
-        (samples / fname).write_text((repo / fname).read_text(encoding="utf-8"), encoding="utf-8")
-
-
-def test_check_without_credentials_uses_fixture(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.delenv("DATANORMA_MOYSKLAD_TOKEN", raising=False)
+def test_check_without_token_fails(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    _write_samples(tmp_path)
-    src = create_source("moysklad", paths=paths)
+    src = create_source("moysklad", paths=paths, source_config={})
     res = src.check()
-    assert res.ok
-    assert res.details and res.details.get("mode") == "fixture"
+    assert res.ok is False
 
 
-def test_discover_returns_streams_and_schema(tmp_path: Path) -> None:
-    _write_samples(tmp_path)
+def test_check_mock(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = create_source("moysklad", paths=paths)
-    catalog = src.discover()
-    names = {s.name for s in catalog.streams}
-    assert names >= {"demand", "customerorder", "product", "counterparty"}
-    for s in catalog.streams:
-        assert s.json_schema.get("type") == "object"
+    body = {"rows": [{"meta": {"href": "x", "type": "organization"}}], "meta": {"size": 1}}
+    with patch("datanorma.sources.moysklad.request_json", return_value=(200, body)):
+        src = create_source("moysklad", paths=paths, source_config={"token": "tok"})
+        res = src.check()
+    assert res.ok is True
 
 
-def test_read_demand_yields_records(tmp_path: Path) -> None:
-    _write_samples(tmp_path)
+def test_discover_mock(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
-    src = create_source("moysklad", paths=paths)
-    rows = list(src.read("demand"))
-    assert len(rows) >= 1
+    row = {"id": "a", "updated": "2026-05-01 12:00:00", "name": "t"}
 
+    def _get(method, url, **kwargs):
+        return 200, {"rows": [row], "meta": {"size": 1}}
+
+    with patch("datanorma.sources.moysklad.request_json", side_effect=_get):
+        src = create_source("moysklad", paths=paths, source_config={"token": "tok"})
+        catalog = src.discover()
+        assert {s.name for s in catalog.streams} >= {"demand", "customerorder", "product", "counterparty"}
+
+
+def test_read_mock(tmp_path) -> None:
+    paths = DataPathsResource(repo_root=str(tmp_path))
+    row = {"id": "a", "updated": "2026-05-01 12:00:00"}
+
+    def _get(method, url, **kwargs):
+        return 200, {"rows": [row], "meta": {"size": 1}}
+
+    with patch("datanorma.sources.moysklad.request_json", side_effect=_get):
+        src = create_source("moysklad", paths=paths, source_config={"token": "tok"})
+        rows = list(src.read("demand", sync_mode="full_refresh"))
+        assert len(rows) >= 1

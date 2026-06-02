@@ -7,18 +7,6 @@ import { queryKeys } from "@/lib/query-keys";
 
 export function IssuesPage() {
   const queryClient = useQueryClient();
-  const query = useQuery({
-    queryKey: queryKeys.issues.list(200),
-    queryFn: async () => {
-      const { rows } = await fetchNormalizationIssues(200);
-      return rows.map(mapNormRowToIssue);
-    },
-  });
-
-  if (query.isPending) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
-  if (query.isError || !query.data) return <div className="p-4">Не удалось загрузить проблемы.</div>;
-
-  const issues = query.data;
   const resolveMutation = useMutation({
     mutationFn: (issueId: number) => resolveIssue(issueId),
     onSuccess: async () => {
@@ -31,6 +19,18 @@ export function IssuesPage() {
       await queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(200) });
     },
   });
+  const query = useQuery({
+    queryKey: queryKeys.issues.list(200),
+    queryFn: async () => {
+      const { rows } = await fetchNormalizationIssues(200);
+      return rows.map(mapNormRowToIssue);
+    },
+  });
+
+  if (query.isLoading) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
+  if (query.isError || !query.data) return <div className="p-4">Не удалось загрузить проблемы.</div>;
+
+  const issues = query.data;
 
   return (
     <div className="p-4">

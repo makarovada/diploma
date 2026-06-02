@@ -23,8 +23,11 @@ from datanorma.normalization.references import load_currency_codes, load_unit_co
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import SOURCE_KINDS, create_source
 from datanorma.sources.schema_inference import records_to_json_schema
-from datanorma.web.deps import AuthUser, get_conn, require_operation, require_request_workspace_id
-from datanorma.web.elt_repo import get_source, public_source_payload
+from datanorma.web.deps import WorkspacePrincipal, get_conn, get_workspace_principal, require_permission, require_request_workspace_id
+from datanorma.web.permission_catalog import PERM_CONNECTION_READ, PERM_CONNECTION_UPDATE, PERM_MAPPING_READ
+from datanorma.web.elt_repo import get_source, list_connection_schedules, public_source_payload
+from datanorma.web.permission_service import filter_rows_by_visibility
+from datanorma.schedules.connection_cron_runner import next_scheduled_run_utc
 from datanorma.web.audit_repo import list_audit_log
 from datanorma.web.sync_runs import list_sync_runs
 from datanorma.config import get_settings
@@ -61,17 +64,42 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "type": "object",
             "required": ["export_path"],
             "properties": {
-                "export_path": {"type": "string", "title": "Путь к выгрузке 1С"},
+                "export_path": {
+                    "type": "string",
+                    "title": "Путь к файлу выгрузки",
+                    "description": "CSV или XLSX на машине, где работает DataNorma. В Docker укажите путь внутри контейнера и смонтируйте каталог с хоста.",
+                },
             },
         }
     if c == "google_sheet":
         return {
             "type": "object",
-            "required": ["service_account_file", "spreadsheet_id"],
+            "required": ["spreadsheet_id"],
             "properties": {
-                "service_account_file": {"type": "string", "title": "Service account JSON", "x-format": "secret"},
-                "spreadsheet_id": {"type": "string", "title": "Spreadsheet ID"},
-                "worksheet": {"type": "string", "title": "Worksheet (0 / имя)", "default": "0"},
+                "spreadsheet_id": {
+                    "type": "string",
+                    "title": "ID таблицы Google Sheets",
+                    "description": "Фрагмент URL между /d/ и /edit",
+                },
+                "worksheet": {"type": "string", "title": "Лист (0 или имя)", "default": "0"},
+                "oauth_refresh_token": {
+                    "type": "string",
+                    "title": "OAuth refresh token",
+                    "x-format": "secret",
+                    "description": "Заполняется кнопкой «Подключить Google» в форме.",
+                },
+                "oauth_access_token": {"type": "string", "title": "OAuth access token", "x-format": "secret"},
+                "service_account_file": {
+                    "type": "string",
+                    "title": "Service account (путь на сервере)",
+                    "x-format": "secret",
+                    "description": "Опционально, если не используете OAuth.",
+                },
+                "service_account_json": {
+                    "type": "object",
+                    "title": "Service account JSON",
+                    "description": "Опционально, если не используете OAuth.",
+                },
             },
         }
     if c == "yandex_metrika":
@@ -81,6 +109,9 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "properties": {
                 "oauth_token": {"type": "string", "title": "OAuth token", "x-format": "secret"},
                 "counter_id": {"type": "string", "title": "Counter ID"},
+                "lookback_days": {"type": "integer", "title": "Глубина отчёта (дней)", "default": 30, "minimum": 1, "maximum": 365},
+                "date_from": {"type": "string", "title": "date1 (YYYY-MM-DD), опционально"},
+                "date_to": {"type": "string", "title": "date2 (YYYY-MM-DD), опционально"},
             },
         }
     if c == "wildberries":
@@ -89,6 +120,7 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "required": ["api_token"],
             "properties": {
                 "api_token": {"type": "string", "title": "WB token", "x-format": "secret"},
+                "lookback_days": {"type": "integer", "title": "Глубина первого запроса (дней)", "default": 30, "minimum": 1, "maximum": 365},
             },
         }
     if c == "bitrix24":
@@ -114,6 +146,7 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "required": ["token"],
             "properties": {
                 "token": {"type": "string", "title": "Token", "x-format": "secret"},
+                "lookback_days": {"type": "integer", "title": "Фильтр updated для full_refresh (дней)", "default": 90, "minimum": 1, "maximum": 730},
             },
         }
     # Destination defaults: минимальная схема.
@@ -125,60 +158,25 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
 
 
 def _connector_streams_hint(code: str) -> list[dict[str, Any]]:
-    c = _code_snake(code)
-    if c == "ozon":
-        return [{"stream_name": "postings", "sync_mode": "incremental", "cursor_field": "posting_number"}]
-    if c == "1c" or c == "onec":
-        return [{"stream_name": "orders", "sync_mode": "full_refresh", "cursor_field": None}]
-    if c == "google_sheet":
-        return [{"stream_name": "orders", "sync_mode": "incremental", "cursor_field": "order_id"}]
-    if c == "yandex_metrika":
-        return [
-            {"stream_name": "summary", "sync_mode": "incremental", "cursor_field": "date"},
-            {"stream_name": "visits", "sync_mode": "incremental", "cursor_field": "date_time"},
-            {"stream_name": "hits", "sync_mode": "incremental", "cursor_field": "date_time"},
-            {"stream_name": "goals_reaches", "sync_mode": "incremental", "cursor_field": "reach_datetime"},
-        ]
-    if c == "wildberries":
-        return [
-            {"stream_name": "orders", "sync_mode": "incremental", "cursor_field": "last_change_date"},
-            {"stream_name": "sales", "sync_mode": "incremental", "cursor_field": "last_change_date"},
-            {"stream_name": "stocks", "sync_mode": "incremental", "cursor_field": "last_change_date"},
-        ]
-    if c == "bitrix24":
-        return [
-            {"stream_name": "crm_deals", "sync_mode": "incremental", "cursor_field": "date_modify"},
-            {"stream_name": "crm_contacts", "sync_mode": "incremental", "cursor_field": "date_modify"},
-            {"stream_name": "crm_leads", "sync_mode": "incremental", "cursor_field": "date_modify"},
-            {"stream_name": "crm_companies", "sync_mode": "incremental", "cursor_field": "date_modify"},
-        ]
-    if c == "amocrm":
-        return [
-            {"stream_name": "leads", "sync_mode": "incremental", "cursor_field": "updated_at"},
-            {"stream_name": "contacts", "sync_mode": "incremental", "cursor_field": "updated_at"},
-            {"stream_name": "companies", "sync_mode": "incremental", "cursor_field": "updated_at"},
-        ]
-    if c == "moysklad":
-        return [
-            {"stream_name": "demand", "sync_mode": "incremental", "cursor_field": "updated"},
-            {"stream_name": "customerorder", "sync_mode": "incremental", "cursor_field": "updated"},
-            {"stream_name": "product", "sync_mode": "incremental", "cursor_field": "updated"},
-            {"stream_name": "counterparty", "sync_mode": "incremental", "cursor_field": "updated"},
-        ]
-    if c == "rest_builder":
-        return [{"stream_name": "rest_stream", "sync_mode": "full_refresh", "cursor_field": None}]
-    # Destinations:
-    return []
+    from datanorma.web.connector_schema_meta import connector_stream_defaults
+
+    return connector_stream_defaults(code)
 
 
 def _as_connector_item(code: str, category: str) -> dict[str, Any]:
+    from datanorma.web.connector_schema_meta import connector_schema_meta
+
     c = _code_snake(code)
     title = c.replace("_", " ").title()
+    schema_meta = connector_schema_meta(c)
     return {
         "code": c,
         "name": title,
         "category": category,
         "streams": _connector_streams_hint(c),
+        "schema_layout": schema_meta["layout"],
+        "entity_labels": schema_meta["entity_labels"],
+        "stream_defaults": schema_meta["stream_defaults"],
         "config_schema": _connector_config_schema(c),
     }
 
@@ -240,7 +238,7 @@ def _serialize_stream_rules(rules: StreamRules) -> dict[str, Any]:
 def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/connectors/catalog")
     def connectors_catalog(
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         role: ROLE_LIT = Query(default="all", description="source|destination|all"),
     ) -> dict[str, Any]:
         role_norm = str(role).lower()
@@ -256,7 +254,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/connectors/catalog/{code}")
     def connector_details(
         code: str,
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
     ) -> dict[str, Any]:
         c = _code_snake(code)
         if c not in set(SOURCE_KINDS) | set(DESTINATION_KINDS):
@@ -267,7 +265,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
 
     @v1.get("/dictionaries")
     def dictionaries_list(
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
     ) -> dict[str, Any]:
         # Названия словарей зашиты: UI ожидает коды.
         return {"items": [{"code": "status", "name": "Статусы"}, {"code": "currency", "name": "Валюты"}, {"code": "unit", "name": "Единицы измерения"}]}
@@ -275,7 +273,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/dictionaries/{code}")
     def dictionaries_get(
         code: str,
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         limit: int = Query(default=100, ge=1, le=500),
         offset: int = Query(default=0, ge=0, le=100000),
@@ -300,7 +298,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/issues")
     def issues_list(
         query: IssueQuery = Depends(),
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
     ) -> dict[str, Any]:
@@ -339,7 +337,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/issues/export")
     def issues_export(
         query: IssueQuery = Depends(),
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
     ) -> Response:
@@ -422,7 +420,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/issues/{issue_id}")
     def issue_get(
         issue_id: int,
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
     ) -> dict[str, Any]:
@@ -449,7 +447,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
 
     @v1.get("/queue")
     def queue_list(
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
         limit: int = Query(default=50, ge=1, le=200),
@@ -467,7 +465,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
 
     @v1.get("/activity")
     def activity_list(
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
         limit: int = Query(default=50, ge=1, le=200),
@@ -484,17 +482,51 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
         except Exception:
             return {"items": []}
 
-    # Schedules - минимальные CRUD-ответы (без миграций для unit-тестов).
+    def _public_schedule_item(row: dict[str, Any]) -> dict[str, Any]:
+        cron = str(row.get("schedule_cron") or "").strip()
+        tz = str(row.get("timezone") or "UTC")
+        is_active = bool(row.get("is_active"))
+        if not is_active:
+            sched_status = "paused"
+        else:
+            sched_status = "ready"
+        next_run = next_scheduled_run_utc(cron, tz) if cron and is_active else None
+        last_run = row.get("last_run_at")
+        last_run_s: str | None
+        if last_run is None:
+            last_run_s = None
+        elif hasattr(last_run, "isoformat"):
+            last_run_s = last_run.isoformat()
+        else:
+            last_run_s = str(last_run)
+        return {
+            "id": int(row["id"]),
+            "connection_id": int(row["id"]),
+            "connection_name": row.get("connection_name"),
+            "cron_expr": cron,
+            "schedule": cron,
+            "timezone": tz,
+            "next_run_at": next_run.isoformat() if next_run else None,
+            "last_run_at": last_run_s,
+            "status": sched_status,
+            "owner": row.get("created_by") or "—",
+            "is_active": is_active,
+        }
+
     @v1.get("/schedules")
     def schedules_list(
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        principal: WorkspacePrincipal = Depends(require_permission(PERM_CONNECTION_READ)),
+        conn: Connection = Depends(get_conn),
+        workspace_id: int = Depends(require_request_workspace_id),
     ) -> dict[str, Any]:
-        return {"items": []}
+        rows = list_connection_schedules(conn, workspace_id=workspace_id)
+        rows = filter_rows_by_visibility(principal.auth_ctx, conn, resource_type="connection", rows=rows)
+        return {"items": [_public_schedule_item(r) for r in rows]}
 
     @v1.post("/schedules")
     def schedules_create(
         body: dict[str, Any],
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
     ) -> dict[str, Any]:
         return {"status": "ok", "item": {"id": -1, **body}}
 
@@ -502,14 +534,14 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     def schedules_update(
         schedule_id: int,
         body: dict[str, Any],
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
     ) -> dict[str, Any]:
         return {"status": "ok", "item": {"id": schedule_id, **body}}
 
     @v1.delete("/schedules/{schedule_id}", status_code=status.HTTP_204_NO_CONTENT)
     def schedules_delete(
         schedule_id: int,
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
     ) -> Response:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -517,7 +549,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     def connections_preview_rules(
         body: PreviewRulesBody,
         request_workspace_id: int = Depends(require_request_workspace_id),
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
     ) -> dict[str, Any]:
         # Нормализация по Connector.default_stream_rules() + discover-поля для json_schema.
@@ -527,7 +559,14 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
                 raise HTTPException(status_code=404, detail={"error_code": "source_not_found"})
             cfg_row = public_source_payload(src_row)
             cc = _code_snake(cfg_row.get("connector_code") or src_row.get("connector_code") or "")
-            src = create_source(cc, paths=DataPathsResource())
+            cfg = cfg_row.get("config") or {}
+            yaml_text = cfg.get("yaml_body") or cfg.get("connector_builder_yaml")
+            src = create_source(
+                cc,
+                paths=DataPathsResource(),
+                yaml_text=str(yaml_text) if yaml_text else None,
+                source_config=cfg if isinstance(cfg, dict) else {},
+            )
             # discover() возвращает streams со схемой.
             catalog = src.discover()
             st = None
@@ -553,7 +592,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
     @v1.get("/connections/{connection_id}/streams")
     def connections_streams_get(
         connection_id: int,
-        _: AuthUser = Depends(require_operation("view_api_v1_catalog")),
+        _: WorkspacePrincipal = Depends(get_workspace_principal),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
     ) -> dict[str, Any]:
@@ -591,7 +630,7 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
         connection_id: int,
         stream_name: str,
         body: dict[str, Any],
-        _: AuthUser = Depends(require_operation("manage_connections_api")),
+        _: WorkspacePrincipal = Depends(require_permission(PERM_CONNECTION_UPDATE, resource_type="connection")),
         conn: Connection = Depends(get_conn),
         workspace_id: int = Depends(require_request_workspace_id),
     ) -> dict[str, Any]:

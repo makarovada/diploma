@@ -256,14 +256,14 @@ export function DashboardPage() {
           </ul>
         </Card>
         <Card className="p-4" data-testid="dashboard-onboarding-checklist">
-          <h2 className="mb-2 text-lg font-semibold">Чеклист онбординга</h2>
+          <h2 className="mb-2 text-lg font-semibold">Первые шаги</h2>
           <ol className="list-inside list-decimal space-y-1 text-sm text-muted-foreground">
             <li>Создайте источник и приёмник</li>
-            <li>Настройте маппинг и нормализацию</li>
+            <li>Настройте подключение в мастере</li>
             <li>Запустите первую синхронизацию</li>
           </ol>
-          <LinkAsButton href="/onboarding" variant="outline" className="mt-3" data-testid="button-open-full-onboarding">
-            Полный чеклист
+          <LinkAsButton href="/connections/new" variant="outline" className="mt-3" data-testid="button-open-full-onboarding">
+            Создать подключение
           </LinkAsButton>
         </Card>
       </div>

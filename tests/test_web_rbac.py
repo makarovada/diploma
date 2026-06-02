@@ -56,13 +56,13 @@ def test_analyst_forbidden_admin_users(client: TestClient) -> None:
     assert r.json()["detail"]["operation"] == "view_admin_users"
 
 
-def test_analyst_allowed_rbac_matrix(client: TestClient) -> None:
+def test_analyst_allowed_permissions_catalog(client: TestClient) -> None:
     app = client.app
     app.dependency_overrides[get_current_user] = lambda: AuthUser("seed_analyst", frozenset({"analyst"}))
-    r = client.get("/api/rbac/matrix", headers={"Authorization": "Bearer t"})
+    r = client.get("/api/v1/permissions/catalog", headers={"Authorization": "Bearer t"})
     assert r.status_code == 200
     data = r.json()
-    assert "operations" in data
+    assert "items" in data
 
 
 def test_integrator_forbidden_admin_users(client: TestClient) -> None:

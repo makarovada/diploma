@@ -23,7 +23,7 @@ export function StepSaveRun({ saving, triggering, saveError, doneMessage, onSave
         </p>
       ) : null}
       {doneMessage ? (
-        <p className="mb-3 text-sm text-green-700 dark:text-green-400" data-testid="text-save-success">
+        <p className="mb-3 text-sm text-ok" data-testid="text-save-success">
           {doneMessage}
         </p>
       ) : null}

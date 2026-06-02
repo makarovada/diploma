@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource
 from datanorma.sources.builder import RestBuilderSource, load_rest_connector_yaml
@@ -32,36 +34,37 @@ def create_source(
     *,
     paths: DataPathsResource | None = None,
     yaml_text: str | None = None,
+    source_config: dict[str, Any] | None = None,
 ) -> BaseSource:
     k = kind.strip().lower().replace("-", "_")
     if k in ("ozon",):
         if paths is None:
             raise ValueError("Для ozon нужен paths: DataPathsResource")
-        return OzonSource(paths)
+        return OzonSource(paths, source_config=source_config)
     if k in ("wildberries", "wb"):
         if paths is None:
             raise ValueError("Для wildberries нужен paths: DataPathsResource")
-        return WildberriesSource(paths)
+        return WildberriesSource(paths, source_config=source_config)
     if k in ("bitrix24", "bx24"):
         if paths is None:
             raise ValueError("Для bitrix24 нужен paths: DataPathsResource")
-        return Bitrix24Source(paths)
+        return Bitrix24Source(paths, source_config=source_config)
     if k in ("amocrm",):
         if paths is None:
             raise ValueError("Для amocrm нужен paths: DataPathsResource")
-        return AmoCRMSource(paths)
+        return AmoCRMSource(paths, source_config=source_config)
     if k in ("moysklad",):
         if paths is None:
             raise ValueError("Для moysklad нужен paths: DataPathsResource")
-        return MoysKladSource(paths)
+        return MoysKladSource(paths, source_config=source_config)
     if k in ("1c", "onec", "1с"):
         if paths is None:
             raise ValueError("Для 1c нужен paths: DataPathsResource")
-        return OneCSource(paths)
+        return OneCSource(paths, source_config=source_config)
     if k in ("google_sheet", "sheets", "google_sheets", "sheet"):
         if paths is None:
             raise ValueError("Для google_sheet нужен paths: DataPathsResource")
-        return GoogleSheetsSource(paths)
+        return GoogleSheetsSource(paths, source_config=source_config)
     if k in ("rest", "rest_builder", "builder", "yaml_rest"):
         if not (yaml_text and yaml_text.strip()):
             raise ValueError("Для rest_builder нужен yaml_text (Connector Builder YAML)")
@@ -70,5 +73,5 @@ def create_source(
     if k in ("yandex_metrika", "yandexmetrika", "metrika", "ya_metrika"):
         if paths is None:
             raise ValueError("Для yandex_metrika нужен paths: DataPathsResource")
-        return YandexMetrikaSource(paths)
+        return YandexMetrikaSource(paths, source_config=source_config)
     raise ValueError(f"Неизвестный тип источника: {kind!r}. Допустимо: {SOURCE_KINDS}")

@@ -1,4 +1,6 @@
 import type { WizardFormState } from "@/components/connection-wizard/wizard-types";
+import { describeCronExpression } from "@/lib/schedule-config";
+import { describeReplicationPreset, replicationPresetFromFields } from "@/lib/destination-sync-mode";
 
 type Props = {
   form: WizardFormState;
@@ -24,21 +26,45 @@ export function StepReview({ form, sourceLabel, destinationLabel, preflightRunni
           <span className="text-muted-foreground">Приёмник:</span> {destinationLabel}
         </li>
         <li>
-          <span className="text-muted-foreground">Потоки:</span> {form.enabledStreamNames.join(", ") || "—"}
+          <span className="text-muted-foreground">Колонок:</span> {form.columnRuleRows.length}
+          {form.schemaLayout === "entities" && form.selectedEntities.length > 0 ? (
+            <span className="text-muted-foreground">
+              {" "}
+              (сущности: {form.selectedEntities.map((e) => form.entityLabels[e] ?? e).join(", ")})
+            </span>
+          ) : null}
         </li>
         <li>
           <span className="text-muted-foreground">Нормализация:</span> {form.normalizationEnabled ? "вкл." : "выкл."}
         </li>
+        {form.streamDefaults.length > 0 ? (
+          <li>
+            <span className="text-muted-foreground">Режимы потоков:</span>
+            <ul className="mt-1 list-inside list-disc text-xs">
+              {form.streamDefaults.map((s) => (
+                <li key={s.stream_name}>
+                  <span className="font-mono">{s.stream_name}</span> —{" "}
+                  {describeReplicationPreset(
+                    replicationPresetFromFields(s.sync_mode, s.destination_sync_mode),
+                  )}
+                </li>
+              ))}
+            </ul>
+          </li>
+        ) : null}
         <li>
-          <span className="text-muted-foreground">Расписание:</span> {form.scheduleCron.trim() || "ручной запуск"} (
-          {form.timezone})
+          <span className="text-muted-foreground">Расписание:</span>{" "}
+          {describeCronExpression(form.scheduleCron, form.timezone)}
+          {form.scheduleCron.trim() ? (
+            <span className="ml-1 font-mono text-xs text-muted-foreground">({form.scheduleCron.trim()})</span>
+          ) : null}
         </li>
       </ul>
       <div className="mt-4 rounded-md border p-3 text-sm" data-testid="wizard-preflight-status">
         {preflightRunning ? (
           <p data-testid="text-preflight-running">Выполняется preflight…</p>
         ) : form.preflightOk === true ? (
-          <p className="text-green-700 dark:text-green-400" data-testid="text-preflight-ok">
+          <p className="text-ok" data-testid="text-preflight-ok">
             Preflight пройден: {form.preflightMessage ?? "источник и приёмник доступны."}
           </p>
         ) : form.preflightOk === false ? (

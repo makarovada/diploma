@@ -1,11 +1,10 @@
-import { apiGetJson, apiPostJson, ApiError, type ApiRequestInit } from "@/lib/api-client";
+import { apiGetJson, apiPostJson, type ApiRequestInit } from "@/lib/api-client";
 import type {
   AdminUserRowDto,
   AuditLogRowDto,
-  DbtModelPreviewResponseDto,
-  DbtModelsResponseDto,
   DestinationCatalogItemDto,
   DimSourceRowDto,
+  EltConnectionDetailDto,
   NormIssueRowDto,
   SalesSummaryDto,
   StagingCountsDto,
@@ -14,7 +13,8 @@ import type {
   V1SyncRunItem,
   WorkspaceItemDto,
 } from "@/lib/api-types";
-import type { Connection, Destination, Issue, Run, Source, Status } from "@/lib/types";
+import { describeCronExpression } from "@/lib/schedule-config";
+import type { Connection, Destination, Issue, Run, Status } from "@/lib/types";
 
 export type {
   AdminUserRowDto,
@@ -30,48 +30,10 @@ export type {
   WorkspaceItemDto,
 } from "@/lib/api-types";
 
-/** @deprecated используйте NormIssueRowDto */
-export type NormIssueRow = NormIssueRowDto;
-
 const soft: ApiRequestInit = { suppressGlobalAuthHandlers: true };
 
-function catalogFromLegacyConnectionsEndpoint(data: { items?: unknown[] }): { items: V1ConnectionItem[] } | null {
-  const items = data.items ?? [];
-  if (items.length === 0) {
-    return { items: [] };
-  }
-  const x = items[0];
-  if (typeof x !== "object" || x === null) {
-    return null;
-  }
-  const row = x as Record<string, unknown>;
-  if ("source_id" in row && "stream_count" in row) {
-    return null;
-  }
-  if (
-    "integration_code" in row &&
-    "stream_name" in row &&
-    typeof row.integration_code === "string"
-  ) {
-    return { items: items as V1ConnectionItem[] };
-  }
-  return null;
-}
-
-/** Каталог строк sync_state (курсоры). Основной путь — /api/v1/sync-streams; при 404 — fallback на старый GET /api/v1/connections (только если ответ в формате sync_state). */
 export async function fetchV1Connections(init?: ApiRequestInit) {
-  try {
-    return await apiGetJson<{ items: V1ConnectionItem[] }>("/api/v1/sync-streams", { ...init });
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) {
-      const body = await apiGetJson<{ items: unknown[] }>("/api/v1/connections", { ...init });
-      const mapped = catalogFromLegacyConnectionsEndpoint(body);
-      if (mapped !== null) {
-        return mapped;
-      }
-    }
-    throw e;
-  }
+  return apiGetJson<{ items: V1ConnectionItem[] }>("/api/v1/sync-streams", { ...init });
 }
 
 export function fetchV1Syncs(limit = 50, init?: ApiRequestInit) {
@@ -114,6 +76,19 @@ export function fetchNormalizationIssues(limit = 20, init?: ApiRequestInit) {
   return apiGetJson<{ rows: NormIssueRowDto[] }>(`/api/data/normalization-issues?limit=${limit}`, { ...init });
 }
 
+/** Каталог коннекторов (источники/приёмники), без БД. Требует Bearer — используйте apiGetJson, не сырой fetch. */
+export async function fetchV1ConnectorsCatalog(
+  role: "all" | "source" | "destination" = "all",
+  init?: ApiRequestInit,
+) {
+  const q = role === "all" ? "" : `?role=${role}`;
+  return apiGetJson<{ items: Array<Record<string, unknown>> }>(`/api/v1/connectors/catalog${q}`, { ...init });
+}
+
+export async function fetchV1ConnectorCatalogItem(code: string, init?: ApiRequestInit) {
+  return apiGetJson<{ item: Record<string, unknown> }>(`/api/v1/connectors/catalog/${encodeURIComponent(code)}`, { ...init });
+}
+
 export function fetchDimSources(init?: ApiRequestInit) {
   return apiGetJson<{ rows: DimSourceRowDto[] }>("/api/data/dim-sources", { ...init });
 }
@@ -130,7 +105,13 @@ export function fetchDestinationsCatalog(init?: ApiRequestInit, workspaceCode?: 
 }
 
 export function fetchWorkspaces(init?: ApiRequestInit) {
-  return apiGetJson<{ items: WorkspaceItemDto[] }>("/api/v1/workspaces", { ...init });
+  return apiGetJson<{ items: WorkspaceItemDto[] }>("/api/v1/workspaces", { ...init }).then((r) => ({
+    items: r.items.map((w) => ({
+      ...w,
+      workspace_code: w.code ?? w.workspace_code ?? "main",
+      workspace_name: w.name ?? w.workspace_name ?? w.code,
+    })),
+  }));
 }
 
 export type AuditLogQuery = {
@@ -172,33 +153,8 @@ export function fetchV1Schedules(init?: ApiRequestInit) {
   return apiGetJson<{ items: Record<string, unknown>[] }>("/api/v1/schedules", { ...init });
 }
 
-export function fetchDbtModels(init?: ApiRequestInit) {
-  return apiGetJson<DbtModelsResponseDto>("/api/v1/dbt/models", { ...init });
-}
-
-export function fetchDbtModelPreview(
-  modelName: string,
-  options?: { limit?: number; schema?: string },
-  init?: ApiRequestInit,
-) {
-  const limit = options?.limit ?? 20;
-  const schemaQ = options?.schema != null && options.schema !== "" ? `&schema=${encodeURIComponent(options.schema)}` : "";
-  return apiGetJson<DbtModelPreviewResponseDto>(
-    `/api/v1/dbt/models/${encodeURIComponent(modelName)}/preview?limit=${limit}${schemaQ}`,
-    { ...init },
-  );
-}
-
 export function fetchAdminUsers(init?: ApiRequestInit) {
   return apiGetJson<{ users: AdminUserRowDto[] }>("/api/admin/users", { ...init });
-}
-
-export function fetchDashboardExtras() {
-  return Promise.allSettled([
-    fetchStagingCounts(soft),
-    fetchV1Syncs(8, soft),
-    fetchNormalizationIssues(8, soft),
-  ]);
 }
 
 export function mapSyncRunStatus(apiStatus: string): Status {
@@ -212,6 +168,12 @@ export function mapSyncRunStatus(apiStatus: string): Status {
   return "draft";
 }
 
+/** Запуск sync_run относится к доменному ELT-подключению (id из /connections/:id). */
+export function syncRunMatchesEltConnection(row: V1SyncRunItem, eltConnectionId: string): boolean {
+  const d = row.domain_connection_id ?? row.connection_id;
+  return d != null && String(d) === eltConnectionId;
+}
+
 export function mapV1SyncToRun(row: V1SyncRunItem): Run {
   const st = mapSyncRunStatus(row.status);
   let stage: Run["stage"] = "complete";
@@ -219,16 +181,18 @@ export function mapV1SyncToRun(row: V1SyncRunItem): Run {
   else if (st === "running") stage = "dbt_run";
   else if (st === "failed") stage = "validate";
   else if (st === "partial") stage = "validate";
+  const connRef =
+    row.domain_connection_id != null ? String(row.domain_connection_id) : row.connection_id != null ? String(row.connection_id) : "";
   return {
     id: String(row.id),
-    connectionId: row.connection_id != null ? String(row.connection_id) : "",
+    connectionId: connRef,
     connectionName: `${row.integration_code} → ${row.stream_name}`,
     status: st,
     stage,
     startedAt: formatTs(row.started_at),
-    duration: syncRunDuration(row.started_at, row.finished_at),
-    records: 0,
-    issues: 0,
+    duration: syncRunDuration(row.started_at, row.finished_at, row.duration_ms),
+    records: row.records_written ?? 0,
+    issues: row.issues_count ?? 0,
     triggeredBy: row.triggered_by ?? "—",
   };
 }
@@ -284,40 +248,38 @@ export function mapV1ToConnection(row: V1ConnectionItem): Connection {
   };
 }
 
-export function buildSourcesFromDimAndV1(dimRows: DimSourceRowDto[], v1Items: V1ConnectionItem[]): Source[] {
-  const byCode = new Map<string, { n: number; last: string | null; anyOk: boolean }>();
-  for (const it of v1Items) {
-    const c = it.integration_code;
-    const agg = byCode.get(c) ?? { n: 0, last: null as string | null, anyOk: false };
-    agg.n += 1;
-    const u = it.updated_at || it.last_success_at;
-    if (u && (!agg.last || u > agg.last)) agg.last = u;
-    if (it.last_success_at) agg.anyOk = true;
-    byCode.set(c, agg);
-  }
-  const dimByCode = new Map(dimRows.map((r) => [r.code, r]));
-  const codes = new Set<string>([...dimByCode.keys(), ...byCode.keys()]);
-  return Array.from(codes)
-    .sort()
-    .map((code) => {
-      const dim = dimByCode.get(code);
-      const st = byCode.get(code);
-      let checkStatus: Source["checkStatus"] = "never";
-      if (st && st.n > 0) {
-        checkStatus = st.anyOk ? "ok" : "warning";
-      }
-      const category = dim?.description?.trim() ? "Справочник" : "Интеграция";
-      return {
-        id: code,
-        name: dim?.name ?? code,
-        connector: code,
-        category,
-        checkStatus,
-        streamCount: st?.n ?? 0,
-        lastUsed: st?.last ? formatTs(st.last) : "—",
-        owner: "—",
-      };
-    });
+/** Карточка подключения из ELT GET /api/v1/connections */
+export function mapEltDetailToConnection(row: EltConnectionDetailDto): Connection {
+  const firstStream = row.streams?.[0];
+  const sm = (firstStream?.sync_mode as Connection["syncMode"]) || "incremental";
+  const mode = sm === "incremental" || sm === "full_refresh" || sm === "append" || sm === "upsert" ? sm : "incremental";
+  let st: Connection["status"] = "ready";
+  if (!row.is_active) st = "disabled";
+  else if (row.status === "paused") st = "paused";
+  const src =
+    row.source_connector_code && row.source_name
+      ? `${row.source_connector_code} · ${row.source_name}`
+      : row.source_connector_code || `source #${row.source_id}`;
+  const dst =
+    row.destination_name && row.destination_connector_code
+      ? `${row.destination_connector_code} · ${row.destination_name}`
+      : row.destination_name || row.destination_connector_code || `destination #${row.destination_id}`;
+  return {
+    id: String(row.id),
+    name: row.name,
+    source: src,
+    destination: dst,
+    status: st,
+    syncMode: mode,
+    schedule: row.schedule_cron?.trim()
+      ? describeCronExpression(row.schedule_cron.trim(), row.timezone || "UTC")
+      : "ручной",
+    lastRunAt: "—",
+    records: 0,
+    issues: 0,
+    mappingCoverage: 0,
+    normalizationEnabled: true,
+  };
 }
 
 export function mapDestinationCatalogItem(row: DestinationCatalogItemDto): Destination {
@@ -348,7 +310,17 @@ export function syncRunLogItemsToLines(rows: V1SyncRunLogItem[]): string[] {
   return rows.map((r) => `[${r.level}] [${r.stage}] ${r.message}`);
 }
 
-export function syncRunDuration(started: string | null, finished: string | null): string {
+export function syncRunDuration(
+  started: string | null,
+  finished: string | null,
+  durationMs?: number | null,
+): string {
+  if (durationMs != null && durationMs >= 0) {
+    const sec = Math.max(0, Math.floor(durationMs / 1000));
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+  }
   if (!started) return "—";
   try {
     const a = new Date(started).getTime();

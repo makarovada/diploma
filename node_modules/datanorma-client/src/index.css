@@ -2,6 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Семантика статусов — палитра Paul Tol / Okabe–Ito: без пары «красный↔зелёный». */
 :root {
   --background: 42 25% 97%;
   --foreground: 160 18% 12%;
@@ -15,10 +16,13 @@
   --primary-foreground: 0 0% 100%;
   --secondary: 145 24% 91%;
   --secondary-foreground: 151 42% 18%;
-  --success: 145 58% 32%;
-  --warning: 36 84% 44%;
-  --destructive: 355 65% 45%;
-  --info: 199 72% 38%;
+  /* Успех — синий (#0072B2), не зелёный */
+  --success: 202 100% 34%;
+  --warning: 43 88% 46%;
+  /* Ошибка — вермилион (#D55E00), не красный */
+  --destructive: 22 92% 44%;
+  /* Выполняется — сине-фиолетовый, отличим от success */
+  --info: 235 55% 46%;
 }
 
 .dark {
@@ -34,10 +38,10 @@
   --primary-foreground: 150 18% 7%;
   --secondary: 150 13% 16%;
   --secondary-foreground: 140 18% 88%;
-  --success: 145 48% 52%;
-  --warning: 38 83% 58%;
-  --destructive: 355 70% 62%;
-  --info: 199 70% 62%;
+  --success: 202 85% 58%;
+  --warning: 43 85% 60%;
+  --destructive: 22 88% 58%;
+  --info: 235 60% 65%;
 }
 
 * {
@@ -46,4 +50,21 @@
 
 body {
   @apply m-0 bg-background text-foreground font-sans;
+}
+
+@layer utilities {
+  .surface-ok {
+    border: 1px solid hsl(var(--success) / 0.45);
+    background-color: hsl(var(--success) / 0.08);
+  }
+  .surface-error {
+    border: 1px solid hsl(var(--destructive) / 0.45);
+    background-color: hsl(var(--destructive) / 0.08);
+  }
+  .text-ok {
+    @apply text-success;
+  }
+  .text-hint {
+    @apply text-warning;
+  }
 }

@@ -15,11 +15,13 @@ import { ConnectorConfigForm } from "@/components/connection-wizard/connector-co
 import { WIZARD_STEP_COUNT, WIZARD_STEP_LABELS } from "@/components/connection-wizard/wizard-constants";
 import { jsonSchemaRequiredList, schemaPropertyKeys } from "@/components/connection-wizard/schema-utils";
 import type {
-  SelectedStreamCfg,
+  SchemaLayout,
+  StreamDefaultDto,
+  WizardColumnRuleRow,
   WizardFormState,
-  WizardMappingRow,
-  WizardPersistMetaV1,
+  WizardPersistMetaV2,
 } from "@/components/connection-wizard/wizard-types";
+import { inferColumnRuleType } from "@/components/connection-wizard/infer-column-rule-type";
 import { stepBlocksNext } from "@/components/connection-wizard/wizard-validation";
 import { Button } from "@/components/ui/button";
 import {
@@ -34,49 +36,52 @@ import {
   postEltSourceDiscover,
   triggerEltConnection,
 } from "@/lib/api-elt";
-import type { IngestCatalogDto } from "@/lib/api-types";
+import type { EltConnectionCreatePayload, EltDiscoverResponseDto, IngestCatalogDto } from "@/lib/api-types";
 import { ApiError } from "@/lib/api-client";
 import { fetchWorkspaces } from "@/lib/api-datanorma";
+import {
+  encodeCursorFields,
+  encodePrimaryKeyFields,
+  parseCursorFields,
+  parsePrimaryKeyFields,
+} from "@/lib/destination-sync-mode";
 import { queryKeys } from "@/lib/query-keys";
+import {
+  currentSpaReturnPath,
+  hasGoogleOAuthCallback,
+  OAUTH_WIZARD_RESTORE_KEY,
+} from "@/lib/oauth-return";
 
-function embedWizardMetaInDescription(userText: string, meta: WizardPersistMetaV1): string {
-  try {
-    const json = JSON.stringify(meta);
-    const suffix = `\n\n__DATANORMA_WIZARD__:${json}`;
-    const base = userText.trim() || "Подключение создано мастером.";
-    const max = 3990;
-    if (base.length + suffix.length <= max) return base + suffix;
-    return base.slice(0, Math.max(0, max - suffix.length)) + suffix;
-  } catch {
-    return userText.trim() || "Подключение создано мастером.";
-  }
-}
-
-function mergeMappingTargets(next: WizardMappingRow[], prev: WizardMappingRow[]): WizardMappingRow[] {
+function mergeColumnRules(next: WizardColumnRuleRow[], prev: WizardColumnRuleRow[]): WizardColumnRuleRow[] {
   const map = new Map(prev.map((r) => [r.id, r]));
   return next.map((r) => {
     const o = map.get(r.id);
-    return o ? { ...r, targetField: o.targetField, transformation: o.transformation } : r;
+    return o ? { ...r, targetField: o.targetField, ruleType: o.ruleType, required: o.required } : r;
   });
 }
 
-function buildMappingRowsFromDiscovery(discovery: IngestCatalogDto | null, enabledNames: string[]): WizardMappingRow[] {
+function buildColumnRulesFromDiscovery(
+  discovery: IngestCatalogDto | null,
+  layout: SchemaLayout,
+  selectedKeys: string[],
+): WizardColumnRuleRow[] {
   if (!discovery) return [];
-  const rows: WizardMappingRow[] = [];
-  for (const name of enabledNames) {
+  const rows: WizardColumnRuleRow[] = [];
+  const keys = layout === "flat" ? (discovery.streams[0]?.name ? [discovery.streams[0].name] : []) : selectedKeys;
+  for (const name of keys) {
     const st = discovery.streams.find((s) => s.name === name);
     if (!st) continue;
     const schema = st.json_schema as Record<string, unknown> | undefined;
-    const keys = schemaPropertyKeys(schema);
+    const propKeys = schemaPropertyKeys(schema);
     const req = new Set(jsonSchemaRequiredList(schema));
-    for (const k of keys) {
+    for (const k of propKeys) {
       const id = `${name}:${k}`;
       rows.push({
         id,
-        streamName: name,
+        entity: layout === "entities" ? name : null,
         sourceField: k,
-        targetField: "",
-        transformation: "",
+        targetField: k,
+        ruleType: inferColumnRuleType(k),
         required: req.has(k),
       });
     }
@@ -84,13 +89,63 @@ function buildMappingRowsFromDiscovery(discovery: IngestCatalogDto | null, enabl
   return rows;
 }
 
+function activeStreamNames(form: WizardFormState): string[] {
+  if (!form.discovery) return [];
+  if (form.schemaLayout === "flat") {
+    const n = form.discovery.streams[0]?.name;
+    return n ? [n] : [];
+  }
+  return form.selectedEntities;
+}
+
+function fieldNamesByStreamFromDiscovery(
+  discovery: IngestCatalogDto | null,
+  streamNames: string[],
+): Record<string, string[]> {
+  const out: Record<string, string[]> = {};
+  if (!discovery) return out;
+  for (const sn of streamNames) {
+    const st = discovery.streams.find((s) => s.name === sn);
+    if (!st) continue;
+    out[sn] = schemaPropertyKeys(st.json_schema as Record<string, unknown> | undefined);
+  }
+  return out;
+}
+
+function buildStreamsPayload(form: WizardFormState): EltConnectionCreatePayload["streams"] {
+  const keys =
+    form.schemaLayout === "flat"
+      ? form.discovery?.streams?.[0]?.name
+        ? [form.discovery.streams[0].name]
+        : []
+      : form.selectedEntities;
+  const defaultsByName = new Map(form.streamDefaults.map((d) => [d.stream_name, d]));
+  return keys.map((sn) => {
+    const d = defaultsByName.get(sn);
+    const sync_mode = (d?.sync_mode ?? "full_refresh") as "full_refresh" | "incremental";
+    return {
+      stream_name: sn,
+      sync_mode,
+      destination_sync_mode: d?.destination_sync_mode ?? "refresh_overwrite",
+      cursor_field: encodeCursorFields(d?.cursor_field),
+      primary_key: encodePrimaryKeyFields(d?.primary_key),
+      is_enabled: true,
+    };
+  });
+}
+
 function errMessage(e: unknown): string {
   if (e instanceof ApiError) {
     try {
       const j = JSON.parse(e.body) as { detail?: unknown };
       const d = j.detail;
-      if (typeof d === "object" && d !== null && "message" in d && typeof (d as { message: string }).message === "string") {
-        return (d as { message: string }).message;
+      if (typeof d === "object" && d !== null) {
+        if ("error_message" in d && typeof (d as { error_message: string }).error_message === "string") {
+          return (d as { error_message: string }).error_message;
+        }
+        if ("message" in d && typeof (d as { message: string }).message === "string") {
+          return (d as { message: string }).message;
+        }
       }
     } catch {
       /* ignore */
@@ -112,10 +167,12 @@ const initialForm = (): WizardFormState => ({
   destinationCheck: null,
   discovery: null,
   discoveryError: null,
-  enabledStreamNames: [],
-  streamOptions: {},
+  schemaLayout: "flat",
+  entityLabels: {},
+  streamDefaults: [],
+  selectedEntities: [],
   destinationId: null,
-  mappingRows: [],
+  columnRuleRows: [],
   normalizationEnabled: true,
   scheduleCron: "",
   timezone: "UTC",
@@ -154,12 +211,37 @@ export function ConnectionWizardShell() {
   }, [wsQuery.data?.items]);
 
   useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
+    const hash = window.location.hash.replace(/^#/, "");
+    const qs = hash.includes("?") ? hash.slice(hash.indexOf("?") + 1) : "";
+    const sp = new URLSearchParams(qs || window.location.search.replace(/^\?/, ""));
     const s = sp.get("source");
     if (s && /^\d+$/.test(s)) {
       setForm((f) => ({ ...f, sourceId: Number(s) }));
     }
   }, []);
+
+  useEffect(() => {
+    if (!hasGoogleOAuthCallback()) return;
+    try {
+      const raw = sessionStorage.getItem(OAUTH_WIZARD_RESTORE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw) as {
+        form?: WizardFormState;
+        step?: number;
+        returnPath?: string;
+      };
+      sessionStorage.removeItem(OAUTH_WIZARD_RESTORE_KEY);
+      const target = saved.returnPath?.trim() || currentSpaReturnPath();
+      if (target.startsWith("/connections/new")) {
+        const pathOnly = target.split("?")[0];
+        setLocation(pathOnly);
+      }
+      if (saved.form) setForm(saved.form);
+      if (typeof saved.step === "number") setStep(saved.step);
+    } catch {
+      /* ignore */
+    }
+  }, [setLocation]);
 
   const sourcesQuery = useQuery({
     queryKey: [...queryKeys.sources.list(), "elt", form.workspaceCode],
@@ -180,6 +262,12 @@ export function ConnectionWizardShell() {
     return s ? `${s.name} (#${s.id})` : `#${form.sourceId}`;
   }, [form.sourceId, sources]);
 
+  const selectedSourceConnector = useMemo(() => {
+    if (!form.sourceId) return null;
+    const s = sources.find((x) => x.id === form.sourceId);
+    return s?.connector_code ?? null;
+  }, [form.sourceId, sources]);
+
   const destinationLabel = useMemo(() => {
     if (!form.destinationId) return "—";
     const d = destinations.find((x) => x.id === form.destinationId);
@@ -188,6 +276,7 @@ export function ConnectionWizardShell() {
 
   useEffect(() => {
     if (!form.sourceId) return;
+    if (hasGoogleOAuthCallback()) return;
     let cancelled = false;
     fetchEltSource(form.sourceId, form.workspaceCode)
       .then(({ item }) => {
@@ -214,9 +303,11 @@ export function ConnectionWizardShell() {
       destinationCheck: null,
       discovery: null,
       discoveryError: null,
-      enabledStreamNames: [],
-      streamOptions: {},
-      mappingRows: [],
+      schemaLayout: "flat",
+      entityLabels: {},
+      streamDefaults: [],
+      selectedEntities: [],
+      columnRuleRows: [],
     }));
   }, [form.sourceId]);
 
@@ -226,12 +317,55 @@ export function ConnectionWizardShell() {
 
   useEffect(() => {
     if (step !== 1 || !form.discovery) return;
-    const built = buildMappingRowsFromDiscovery(form.discovery, form.enabledStreamNames);
+    const keys =
+      form.schemaLayout === "flat"
+        ? form.discovery.streams[0]?.name
+          ? [form.discovery.streams[0].name]
+          : []
+        : form.selectedEntities;
+    const built = buildColumnRulesFromDiscovery(form.discovery, form.schemaLayout, keys);
     setForm((f) => ({
       ...f,
-      mappingRows: mergeMappingTargets(built, f.mappingRows),
+      columnRuleRows: mergeColumnRules(built, f.columnRuleRows),
     }));
-  }, [step, form.discovery, form.enabledStreamNames]);
+  }, [step, form.discovery, form.schemaLayout, form.selectedEntities]);
+
+  useEffect(() => {
+    if (!form.discovery) return;
+    const keys = activeStreamNames(form);
+    if (keys.length === 0) return;
+    setForm((f) => {
+      const byName = new Map(f.streamDefaults.map((d) => [d.stream_name, d]));
+      const apiDefaults = new Map(f.streamDefaults.map((d) => [d.stream_name, d]));
+      const next: StreamDefaultDto[] = keys.map((sn) => {
+        const existing = byName.get(sn);
+        if (existing) return existing;
+        const fromApi = apiDefaults.get(sn);
+        return {
+          stream_name: sn,
+          sync_mode: fromApi?.sync_mode ?? "full_refresh",
+          destination_sync_mode: fromApi?.destination_sync_mode ?? "refresh_overwrite",
+          cursor_field: fromApi?.cursor_field ? parseCursorFields(fromApi.cursor_field as string | string[] | null) : null,
+          primary_key: fromApi?.primary_key ?? null,
+        };
+      });
+      return { ...f, streamDefaults: next };
+    });
+  }, [form.discovery, form.schemaLayout, form.selectedEntities]);
+
+  const replicationFieldNames = useMemo(
+    () => fieldNamesByStreamFromDiscovery(form.discovery, activeStreamNames(form)),
+    [form.discovery, form.schemaLayout, form.selectedEntities],
+  );
+
+  const onChangeStreamDefault = useCallback((streamName: string, patch: Partial<StreamDefaultDto>) => {
+    setForm((f) => ({
+      ...f,
+      streamDefaults: f.streamDefaults.map((d) =>
+        d.stream_name === streamName ? { ...d, ...patch } : d,
+      ),
+    }));
+  }, []);
 
   useEffect(() => {
     if (step !== 3 || !form.sourceId || !form.destinationId) return;
@@ -295,37 +429,49 @@ export function ConnectionWizardShell() {
 
   const saveConnectionMutation = useMutation({
     mutationFn: async ({ runAfter, form: wf }: SaveMutPayload) => {
-      const meta: WizardPersistMetaV1 = {
-        v: 1,
+      const selected_entities =
+        wf.schemaLayout === "flat"
+          ? wf.discovery?.streams?.[0]?.name
+            ? [wf.discovery.streams[0].name]
+            : []
+          : wf.selectedEntities;
+      const meta: WizardPersistMetaV2 = {
+        v: 2,
+        layout: wf.schemaLayout,
+        selected_entities,
         normalization_enabled: wf.normalizationEnabled,
-        mapping: wf.mappingRows.map((r) => ({
-          stream: r.streamName,
+        column_rules: wf.columnRuleRows.map((r) => ({
+          entity: r.entity,
           source_field: r.sourceField,
-          target_field: r.targetField,
-          transformation: r.transformation,
+          target_field: r.targetField.trim() || r.sourceField,
+          type: r.ruleType,
+          required: r.required,
         })),
       };
-      const description = embedWizardMetaInDescription(wf.connectionDescription, meta);
       const cron = wf.scheduleCron.trim() ? wf.scheduleCron.trim() : null;
+      const column_rules = meta.column_rules.map((r) => ({
+        entity: r.entity,
+        source_field: r.source_field,
+        target_field: r.target_field,
+        type: r.type,
+        required: r.required,
+      }));
       const { item } = await createEltConnection({
         workspace_code: wf.workspaceCode,
         name: wf.connectionName.trim(),
-        description,
+        description: wf.connectionDescription.trim() || null,
         source_id: wf.sourceId!,
         destination_id: wf.destinationId!,
         schedule_cron: cron,
         timezone: wf.timezone || "UTC",
-        streams: wf.enabledStreamNames.map((sn) => {
-          const o = wf.streamOptions[sn] ?? { sync_mode: "full_refresh" as const, cursor_field: null };
-          return {
-            stream_name: sn,
-            sync_mode: o.sync_mode,
-            cursor_field: o.sync_mode === "incremental" ? o.cursor_field : null,
-            is_enabled: true,
-          };
-        }),
+        streams: buildStreamsPayload(wf),
+        column_rules,
+        wizard_meta: meta,
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.connections.list() });
+      await queryClient.invalidateQueries({ queryKey: ["connections", "elt"] });
+      await queryClient.invalidateQueries({ queryKey: ["schedules", "v1"] });
+      await queryClient.invalidateQueries({ queryKey: ["sources", "elt"] });
       if (!runAfter) {
         return { connectionId: item.id, runId: null as number | null };
       }
@@ -403,27 +549,28 @@ export function ConnectionWizardShell() {
     setForm((f) => ({ ...f, discoveryError: null }));
     if (!form.sourceId) return;
     try {
-      const { catalog } = await discoverMutation.mutateAsync({
+      const resp = await discoverMutation.mutateAsync({
         sourceId: form.sourceId,
         workspaceCode: form.workspaceCode,
       });
-      const opts: Record<string, SelectedStreamCfg> = {};
-      for (const s of catalog.streams) {
-        const modes = s.supported_sync_modes?.length ? s.supported_sync_modes : ["full_refresh", "incremental"];
-        let mode: SelectedStreamCfg["sync_mode"] = "full_refresh";
-        if (modes.includes("incremental")) mode = "incremental";
-        else if (modes.includes("full_refresh")) mode = "full_refresh";
-        opts[s.name] = {
-          sync_mode: mode,
-          cursor_field: s.default_cursor_field?.[0] ?? null,
-        };
-      }
+      const layout = (resp.layout ?? "flat") as SchemaLayout;
+      const entityLabels = resp.entity_labels ?? {};
+      const streamDefaults = (resp.stream_defaults ?? []) as StreamDefaultDto[];
+      const normalizedStreamDefaults: StreamDefaultDto[] = streamDefaults.map((d) => ({
+        ...d,
+        cursor_field: parseCursorFields(d.cursor_field as string | string[] | null),
+        primary_key: parsePrimaryKeyFields(d.primary_key as string | string[] | null),
+      }));
+      const catalog = resp.catalog;
+      const selectedEntities = layout === "entities" ? catalog.streams.map((x) => x.name) : [];
       setForm((f) => ({
         ...f,
         discovery: catalog,
         discoveryError: null,
-        enabledStreamNames: catalog.streams.map((x) => x.name),
-        streamOptions: opts,
+        schemaLayout: layout,
+        entityLabels,
+        streamDefaults: normalizedStreamDefaults,
+        selectedEntities,
       }));
     } catch (e) {
       setForm((f) => ({
@@ -434,25 +581,12 @@ export function ConnectionWizardShell() {
     }
   };
 
-  const onToggleStream = (name: string, enabled: boolean) => {
+  const onToggleEntity = (name: string, enabled: boolean) => {
     setForm((f) => {
-      const set = new Set(f.enabledStreamNames);
+      const set = new Set(f.selectedEntities);
       if (enabled) set.add(name);
       else set.delete(name);
-      return { ...f, enabledStreamNames: Array.from(set) };
-    });
-  };
-
-  const onChangeStreamOption = (name: string, patch: Partial<SelectedStreamCfg>) => {
-    setForm((f) => {
-      const cur = f.streamOptions[name] ?? { sync_mode: "full_refresh" as const, cursor_field: null };
-      return {
-        ...f,
-        streamOptions: {
-          ...f.streamOptions,
-          [name]: { ...cur, ...patch },
-        },
-      };
+      return { ...f, selectedEntities: Array.from(set) };
     });
   };
 
@@ -514,10 +648,10 @@ export function ConnectionWizardShell() {
     );
   };
 
-  const onChangeMappingRow = (id: string, patch: Partial<WizardMappingRow>) => {
+  const onChangeColumnRuleRow = (id: string, patch: Partial<WizardColumnRuleRow>) => {
     setForm((f) => ({
       ...f,
-      mappingRows: f.mappingRows.map((r) => (r.id === id ? { ...r, ...patch } : r)),
+      columnRuleRows: f.columnRuleRows.map((r) => (r.id === id ? { ...r, ...patch } : r)),
     }));
   };
 
@@ -561,10 +695,17 @@ export function ConnectionWizardShell() {
           />
 
           <ConnectorConfigForm
+            connectorCode={selectedSourceConnector}
             configText={form.credentialsConfigText}
             needsPersist={form.credentialsSavedText !== form.credentialsConfigText}
             onChangeText={(credentialsConfigText) => updateForm({ credentialsConfigText })}
             onSaveConfig={onSaveCredentials}
+            onBeforeGoogleOAuth={() => {
+              sessionStorage.setItem(
+                OAUTH_WIZARD_RESTORE_KEY,
+                JSON.stringify({ form, step, returnPath: currentSpaReturnPath() }),
+              );
+            }}
             saving={patchCfgMutation.isPending}
             saveError={saveCredError}
           />
@@ -580,16 +721,19 @@ export function ConnectionWizardShell() {
 
       {step === 1 && (
         <StepStreamsAndColumns
+          layout={form.schemaLayout}
+          entityLabels={form.entityLabels}
           discovery={form.discovery}
           discoveryError={form.discoveryError}
           discovering={discoverMutation.isPending}
           onDiscover={onDiscover}
-          enabledStreamNames={form.enabledStreamNames}
-          streamOptions={form.streamOptions}
-          onToggleStream={onToggleStream}
-          onChangeStreamOption={onChangeStreamOption}
-          mappingRows={form.mappingRows}
-          onChangeMappingRow={onChangeMappingRow}
+          selectedEntities={form.selectedEntities}
+          onToggleEntity={onToggleEntity}
+          streamDefaults={form.streamDefaults}
+          fieldNamesByStream={replicationFieldNames}
+          onChangeStreamDefault={onChangeStreamDefault}
+          columnRuleRows={form.columnRuleRows}
+          onChangeColumnRuleRow={onChangeColumnRuleRow}
         />
       )}
 

@@ -1,76 +1,143 @@
-"""Коннектор МойСклад: check / discover / read (минимальное ядро + fixtures)."""
+"""Коннектор МойСклад JSON API (Remap 1.2)."""
 
 from __future__ import annotations
 
-import json
 import logging
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
-
 from datanorma.config import get_settings
 from datanorma.core.ingest_protocol import IngestCatalog, SyncMode
+from datanorma.http.client import request_json
 from datanorma.ingest.cursor_filter import filter_incremental_dict_rows
 from datanorma.normalization.default_stream_rules import default_stream_rules_from_json_schema
 from datanorma.normalization.rules import StreamRules
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.base import BaseSource, SourceCheckResult
 from datanorma.sources.schema_inference import records_to_json_schema
+from datanorma.sources.source_config import cfg_int, cfg_str
 
 _log = logging.getLogger(__name__)
+
+MOYSKLAD_BASE = "https://api.moysklad.ru/api/remap/1.2"
+
+_ENTITY_PATHS: dict[str, str] = {
+    "demand": "/entity/demand",
+    "customerorder": "/entity/customerorder",
+    "product": "/entity/product",
+    "counterparty": "/entity/counterparty",
+}
+_CURSOR_FIELD_RAW = "updated"
 
 
 class MoysKladSource(BaseSource):
     integration_code = "moysklad"
 
-    _STREAM_FIXTURES: dict[str, str] = {
-        "demand": "moysklad_demand.json",
-        "customerorder": "moysklad_customerorder.json",
-        "product": "moysklad_product.json",
-        "counterparty": "moysklad_counterparty.json",
-    }
-
-    _CURSOR_FIELD_RAW = "updated"
-
-    def __init__(self, paths: DataPathsResource) -> None:
+    def __init__(self, paths: DataPathsResource, *, source_config: dict[str, Any] | None = None) -> None:
         self._paths = paths
+        self._source_config = source_config or {}
         self._settings = get_settings()
-        self._last_ingest_mode: str = "fixture"
+        self._last_ingest_mode: str = "moysklad_api"
 
-    def _load_fixture_rows(self, stream_name: str) -> list[dict[str, Any]]:
-        fname = self._STREAM_FIXTURES.get(stream_name)
-        if not fname:
+    def _token(self) -> str:
+        return cfg_str(self._source_config, "token", self._settings.moysklad_token or "")
+
+    def _lookback_days(self) -> int:
+        d = cfg_int(self._source_config, "lookback_days", 90)
+        return max(1, min(d, 730))
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._token()}",
+            "Accept-Encoding": "gzip",
+            "Content-Type": "application/json",
+        }
+
+    def _parse_updated_ms(self, row: dict[str, Any]) -> int | None:
+        u = row.get(_CURSOR_FIELD_RAW)
+        if isinstance(u, str) and u.strip():
+            try:
+                dt = datetime.fromisoformat(u.replace("Z", "+00:00"))
+                return int(dt.timestamp() * 1000)
+            except ValueError:
+                return None
+        return None
+
+    def _fetch_entities(self, stream_name: str, updated_gt_ms: int | None) -> list[dict[str, Any]]:
+        path = _ENTITY_PATHS.get(stream_name)
+        if not path:
             raise ValueError(f"МойСклад: неизвестный stream {stream_name!r}")
-        path = self._paths.sample_file(fname)
-        if not path.is_file():
+        url = MOYSKLAD_BASE + path
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        limit = 500
+        while True:
+            params: dict[str, Any] = {"limit": limit, "offset": offset}
+            if updated_gt_ms is not None:
+                params["filter"] = f"updated>{updated_gt_ms}"
+            status, body = request_json("GET", url, headers=self._headers(), params=params)
+            if status >= 400:
+                raise RuntimeError(f"МойСклад HTTP {status}: {body!r}")
+            if not isinstance(body, dict):
+                raise RuntimeError("МойСклад: ожидался JSON object.")
+            chunk = body.get("rows") if isinstance(body.get("rows"), list) else []
+            for x in chunk:
+                if isinstance(x, dict):
+                    rows.append(x)
+            meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
+            size = int(meta.get("size") or len(chunk) or 0)
+            if size < limit:
+                break
+            offset += limit
+            if offset > 500000:
+                _log.warning("МойСклад: прерывание после offset %s", offset)
+                break
+        return rows
+
+    def _fetch_sample(self, stream_name: str, n: int = 50) -> list[dict[str, Any]]:
+        path = _ENTITY_PATHS.get(stream_name)
+        if not path:
+            raise ValueError(f"МойСклад: неизвестный stream {stream_name!r}")
+        url = MOYSKLAD_BASE + path
+        since = datetime.now(timezone.utc) - timedelta(days=min(self._lookback_days(), 365))
+        ms = int(since.timestamp() * 1000)
+        params = {"limit": n, "offset": 0, "filter": f"updated>{ms}"}
+        status, body = request_json("GET", url, headers=self._headers(), params=params)
+        if status >= 400:
+            raise RuntimeError(f"МойСклад HTTP {status}: {body!r}")
+        if not isinstance(body, dict):
             return []
-        with path.open(encoding="utf-8") as f:
-            data = json.load(f)
-        if isinstance(data, list):
-            return [x for x in data if isinstance(x, dict)]
-        if isinstance(data, dict):
-            inner = data.get("result") or data.get("rows") or data.get("records") or data.get("data")
-            if isinstance(inner, list):
-                return [x for x in inner if isinstance(x, dict)]
-        return []
+        chunk = body.get("rows") if isinstance(body.get("rows"), list) else []
+        return [dict(x) for x in chunk if isinstance(x, dict)][:n]
 
     def check(self) -> SourceCheckResult:
-        token = (self._settings.moysklad_token or "").strip()
+        token = self._token()
         if not token:
-            return SourceCheckResult(ok=True, message="МойСклад без токена: доступен sample (fixtures).", details={"mode": "fixture"})
-        return SourceCheckResult(ok=True, message="МойСклад: токен задан, используется fixtures.", details={"mode": "fixture"})
+            return SourceCheckResult(ok=False, message="Укажите token МойСклад в конфигурации источника.", details={})
+        try:
+            url = MOYSKLAD_BASE + "/entity/organization"
+            status, body = request_json("GET", url, headers=self._headers(), params={"limit": 1})
+            if status >= 400:
+                return SourceCheckResult(ok=False, message=f"МойСклад HTTP {status}: {body!r}", details={})
+            return SourceCheckResult(ok=True, message="МойСклад API: авторизация успешна.", details={"mode": "moysklad_api"})
+        except Exception as exc:
+            return SourceCheckResult(ok=False, message=str(exc), details={"mode": "moysklad_api"})
 
     def discover(self) -> IngestCatalog:
+        if not self._token():
+            raise ValueError("МойСклад: нужен token.")
         streams_out = []
-        for stream_name in self._STREAM_FIXTURES.keys():
-            rows = self._load_fixture_rows(stream_name)
-            schema = records_to_json_schema(rows[:200]) if rows else {"type": "object", "properties": {}}
-            stream = self.ingest_stream(
-                stream_name,
-                schema,
-                sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
-                default_cursor_field=[self._CURSOR_FIELD_RAW],
-                source_defined_cursor=True,
+        for stream_name in _ENTITY_PATHS:
+            rows = self._fetch_sample(stream_name, n=80)
+            schema = records_to_json_schema(rows) if rows else {"type": "object", "properties": {}}
+            streams_out.append(
+                self.ingest_stream(
+                    stream_name,
+                    schema,
+                    sync_modes=(SyncMode.full_refresh, SyncMode.incremental),
+                    default_cursor_field=[_CURSOR_FIELD_RAW],
+                    source_defined_cursor=True,
+                )
             )
-            streams_out.append(stream)
         return IngestCatalog(streams=streams_out)
 
     def read(
@@ -81,12 +148,23 @@ class MoysKladSource(BaseSource):
         cursor_field: str | None = None,
         last_cursor: str | None = None,
     ) -> Iterator[dict[str, Any]]:
-        if stream_name not in self._STREAM_FIXTURES:
+        if stream_name not in _ENTITY_PATHS:
             raise ValueError(f"МойСклад: неизвестный stream {stream_name!r}")
-        rows = self._load_fixture_rows(stream_name)
-        self._last_ingest_mode = "fixture"
+        if not self._token():
+            raise ValueError("МойСклад: нужен token.")
 
-        eff_cursor = cursor_field or self._CURSOR_FIELD_RAW
+        updated_gt_ms: int | None = None
+        if sync_mode == "incremental" and last_cursor and last_cursor.strip().isdigit():
+            updated_gt_ms = int(last_cursor.strip())
+        elif sync_mode == "full_refresh":
+            since = datetime.now(timezone.utc) - timedelta(days=self._lookback_days())
+            updated_gt_ms = int(since.timestamp() * 1000)
+
+        rows = self._fetch_entities(stream_name, updated_gt_ms)
+        eff_cursor = cursor_field or _CURSOR_FIELD_RAW
+        if sync_mode == "incremental" and updated_gt_ms is not None:
+            yield from rows
+            return
         filtered = filter_incremental_dict_rows(
             rows,
             cursor_field=eff_cursor,
@@ -104,12 +182,8 @@ class MoysKladSource(BaseSource):
             cursor_field=cursor_target,
             primary_key=[],
         )
-
-        # МойСклад: sum в копейках.
         for col in rules.columns:
             if col.source_field == "sum":
                 col.type = "currency_amount"
                 col.scale_factor = 0.01
-
         return rules
-

@@ -9,7 +9,9 @@ export const queryKeys = {
   },
   connections: {
     list: () => ["connections", "v1"] as const,
+    eltList: (workspaceCode: string) => ["connections", "elt", workspaceCode] as const,
     forPath: (id: string) => ["connections", "v1", "for-path", id] as const,
+    eltDetail: (id: string, workspaceCode: string) => ["connections", "elt", "detail", id, workspaceCode] as const,
     detail: (id: string) => ["connections", "detail", id] as const,
   },
   runs: {
@@ -23,11 +25,15 @@ export const queryKeys = {
   },
   sources: {
     list: () => ["sources", "aggregated"] as const,
+    eltList: (workspaceCode: string) => ["sources", "elt", workspaceCode] as const,
     detail: (sourceId: string) => ["sources", "detail", sourceId] as const,
+    eltDetail: (sourceId: number, workspaceCode: string) => ["sources", "elt", "detail", sourceId, workspaceCode] as const,
   },
   destinations: {
     list: () => ["destinations", "catalog"] as const,
     detail: (destinationId: string) => ["destinations", "detail", destinationId] as const,
+    eltDetail: (destinationId: number, workspaceCode: string) =>
+      ["destinations", "elt", "detail", destinationId, workspaceCode] as const,
   },
   users: {
     list: () => ["admin", "users"] as const,

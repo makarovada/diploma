@@ -40,6 +40,8 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
+allure-results/
+allure-report/
 htmlcov/
 .tox/
 .nox/
@@ -139,6 +141,10 @@ celerybeat.pid
 
 # Environments
 .env
+
+# OAuth / service account secrets (не коммитить)
+config/secrets/*.json
+!config/secrets/*.example
 
 # Dagster
 .tmp_dagster_home*/

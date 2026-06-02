@@ -11,7 +11,7 @@
 - `docs/connectors.md` - контракт и каталог коннекторов.
 - `docs/yandex_metrika_connector.md` - специфика источника Яндекс Метрика.
 - `docs/normalization_rules.md` - структурная нормализация.
-- `docs/frontend.md` - стратегия React UI + Jinja fallback.
+- `docs/frontend.md` - стратегия React UI.
 - `docs/backend.md` - backend-компоненты.
 - `docs/api.md` - API-карта.
 - `docs/security.md` - auth/RBAC/CORS/секреты.
@@ -21,7 +21,6 @@
 - `docs/acceptance_plan.md` - ПМИ и критерии приемки.
 - `docs/manual_testing_guide.md` - подробные ручные сценарии.
 - `docs/comparison_ingest.md` - позиционирование относительно Ingest.
-- `docs/phase_c_routes.md` - перечень web UI маршрутов (`/app/*`).
 - `docs/adding_russian_connector.md` - инструкция по добавлению нового коннектора.
 - `docs/vkr_rbac_text.md` - материал по RBAC для ВКР.
 

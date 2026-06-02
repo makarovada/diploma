@@ -5,16 +5,12 @@ import {
   Cable,
   CalendarClock,
   CircleAlert,
-  Code2,
   Database,
   HardDriveDownload,
-  HelpCircle,
   LayoutDashboard,
   Plug,
   PlayCircle,
-  Settings,
   Users,
-  WandSparkles,
   Warehouse,
 } from "lucide-react";
 
@@ -24,8 +20,8 @@ export type NavItem = {
   icon: LucideIcon;
   badge?: string;
   match?: "exact" | "prefix";
-  /** Только роль platform_admin (журнал аудита). */
-  platformAdminOnly?: boolean;
+  /** Скрыть пункт, если нет workspace-права. */
+  requiredPermission?: string;
 };
 
 export const navSections: { title: string; items: NavItem[] }[] = [
@@ -56,10 +52,7 @@ export const navSections: { title: string; items: NavItem[] }[] = [
   {
     title: "Данные",
     items: [
-      { href: "/normalization", label: "Нормализация", icon: WandSparkles, match: "prefix" },
-      { href: "/semantic-layer", label: "Семантический слой", icon: BookOpen, match: "exact" },
       { href: "/issues", label: "Проблемные записи", icon: CircleAlert, badge: "73", match: "prefix" },
-      { href: "/data-preview", label: "Предпросмотр данных", icon: Database, match: "exact" },
     ],
   },
   {
@@ -68,15 +61,7 @@ export const navSections: { title: string; items: NavItem[] }[] = [
       { href: "/users", label: "Пользователи и роли", icon: Users, match: "prefix" },
       { href: "/workspaces", label: "Рабочие пространства", icon: Warehouse, match: "prefix" },
       { href: "/dictionaries", label: "Справочники", icon: BookOpen, match: "prefix" },
-      { href: "/settings", label: "Настройки", icon: Settings, match: "prefix" },
-      { href: "/audit", label: "Аудит", icon: Activity, match: "prefix", platformAdminOnly: true },
-    ],
-  },
-  {
-    title: "Справка",
-    items: [
-      { href: "/help", label: "Помощь", icon: HelpCircle, match: "prefix" },
-      { href: "/api-docs", label: "API docs", icon: Code2, match: "prefix" },
+      { href: "/audit", label: "Аудит", icon: Activity, match: "prefix", requiredPermission: "audit.read" },
     ],
   },
 ];

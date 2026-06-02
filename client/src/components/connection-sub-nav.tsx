@@ -5,8 +5,6 @@ const tabs: { suffix: string; label: string; testId: string }[] = [
   { suffix: "", label: "Обзор", testId: "tab-connection-overview" },
   { suffix: "/edit", label: "Редактирование", testId: "tab-connection-edit" },
   { suffix: "/streams", label: "Потоки", testId: "tab-connection-streams" },
-  { suffix: "/mapping", label: "Маппинг", testId: "tab-connection-mapping" },
-  { suffix: "/normalization", label: "Нормализация", testId: "tab-connection-normalization" },
   { suffix: "/runs", label: "Запуски", testId: "tab-connection-runs" },
   { suffix: "/logs", label: "Логи", testId: "tab-connection-logs" },
   { suffix: "/issues", label: "Проблемы", testId: "tab-connection-issues" },

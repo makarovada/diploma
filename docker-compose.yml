@@ -16,6 +16,25 @@ services:
       timeout: 5s
       retries: 20
 
+  # UI React на :8080 берётся из образа (client собирается в Dockerfile). После правок в client/: docker compose build fastapi && docker compose up -d
+  # Либо откройте дев-UI на :5173 (volume ./client — пересборка при каждом старте контейнера ui).
+  # Внешний sink для ELT-тестов (порт 5544). Профиль e2e: docker compose --profile e2e up -d
+  # Если sink уже на хосте :5544 — сервис не поднимайте; fastapi ходит через host.docker.internal.
+  test-sink:
+    profiles: ["e2e"]
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_pass
+      POSTGRES_DB: test_sink
+    ports:
+      - "5544:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d test_sink"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+
   fastapi:
     build:
       context: .
@@ -23,9 +42,14 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma
       DATANORMA_DAGSTER_UI_URL: http://dagster-webserver:3000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./data:/app/data:ro
+      - ./config/secrets:/app/config/secrets:ro
     ports:
       - "8080:8080"
 
@@ -37,12 +61,15 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma
       DAGSTER_HOME: /opt/dagster/dagster_home
+      DAGSTER_GRPC_PROXY_HEARTBEAT_TTL_SECONDS: "180"
+      DAGSTER_PROXY_SERVER_HEARTBEAT_TIMEOUT: "180"
     depends_on:
       postgres:
         condition: service_healthy
     volumes:
       - datanorma_dagster_home:/opt/dagster/dagster_home
       - ./docker/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml:ro
+      - ./data:/app/data:ro
     ports:
       - "3000:3000"
 
@@ -54,6 +81,11 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg://datanorma:datanorma@postgres:5432/datanorma
       DAGSTER_HOME: /opt/dagster/dagster_home
+      # Загрузка datanorma.definitions может занимать >30 с; без этого code server падает по heartbeat.
+      DAGSTER_GRPC_PROXY_HEARTBEAT_TTL_SECONDS: "180"
+      DAGSTER_PROXY_SERVER_HEARTBEAT_TIMEOUT: "180"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -62,6 +94,7 @@ services:
     volumes:
       - datanorma_dagster_home:/opt/dagster/dagster_home
       - ./docker/dagster.yaml:/opt/dagster/dagster_home/dagster.yaml:ro
+      - ./data:/app/data:ro
 
   ui:
     image: node:20-alpine

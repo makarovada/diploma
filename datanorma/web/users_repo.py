@@ -8,9 +8,6 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.engine import Connection
 
-from datanorma.web.rbac_matrix import ROLE_PLATFORM_ADMIN
-
-
 @dataclass
 class DbUser:
     id: int
@@ -27,26 +24,64 @@ def update_user_password_hash(conn: Connection, user_id: int, password_hash: str
     )
 
 
+def create_user(
+    conn: Connection,
+    *,
+    username: str,
+    email: str | None,
+    password_hash: str,
+) -> int:
+    row = conn.execute(
+        text(
+            "INSERT INTO app_user (username, email, password_hash) "
+            "VALUES (:u, :e, :p) RETURNING id"
+        ),
+        {
+            "u": username.strip(),
+            "e": (email or "").strip() or None,
+            "p": password_hash,
+        },
+    ).mappings().one()
+    return int(row["id"])
+
+
+def assign_role_to_user(conn: Connection, *, user_id: int, role_name: str) -> None:
+    conn.execute(
+        text(
+            "INSERT INTO user_role (user_id, role_id) "
+            "SELECT :uid, r.id FROM role r WHERE r.name = :rn "
+            "ON CONFLICT (user_id, role_id) DO NOTHING"
+        ),
+        {"uid": user_id, "rn": role_name.strip()},
+    )
+
+
 def load_user_workspaces(conn: Connection, user_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         text(
-            "SELECT w.id, w.code, w.name FROM user_workspace uw "
+            "SELECT w.id, w.code, w.name, uw.is_admin FROM user_workspace uw "
             "JOIN workspace w ON w.id = uw.workspace_id "
             "WHERE uw.user_id = :id ORDER BY w.id"
         ),
         {"id": user_id},
     ).mappings().all()
-    return [{"id": int(r["id"]), "code": str(r["code"]), "name": str(r["name"])} for r in rows]
+    return [
+        {
+            "id": int(r["id"]),
+            "code": str(r["code"]),
+            "name": str(r["name"]),
+            "is_admin": bool(r.get("is_admin")),
+        }
+        for r in rows
+    ]
 
 
 def list_all_workspace_ids(conn: Connection) -> list[int]:
     return [int(r[0]) for r in conn.execute(text("SELECT id FROM workspace ORDER BY id")).fetchall()]
 
 
-def load_workspaces_visible(conn: Connection, username: str, roles: frozenset[str]) -> list[dict[str, Any]]:
-    if ROLE_PLATFORM_ADMIN in roles:
-        rows = conn.execute(text("SELECT w.id, w.code, w.name FROM workspace w ORDER BY w.id")).mappings().all()
-        return [{"id": int(r["id"]), "code": str(r["code"]), "name": str(r["name"])} for r in rows]
+def load_workspaces_visible(conn: Connection, username: str, roles: frozenset[str] | None = None) -> list[dict[str, Any]]:
+    _ = roles
     urow = conn.execute(
         text("SELECT id FROM app_user WHERE username = :u AND COALESCE(is_active, true)"),
         {"u": username.strip()},

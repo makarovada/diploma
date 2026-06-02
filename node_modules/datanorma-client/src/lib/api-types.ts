@@ -7,6 +7,7 @@ export type WorkspaceRefDto = {
   id: number;
   code: string;
   name: string;
+  is_admin?: boolean;
 };
 
 export type MeDto = {
@@ -15,11 +16,21 @@ export type MeDto = {
   user_id?: number | null;
   workspaces: WorkspaceRefDto[];
   active_workspace_id: number | null;
+  is_workspace_admin?: boolean;
+  permissions?: string[];
 };
 
 export type LoginResponseDto = {
   access_token: string;
   token_type: string;
+};
+
+export type RegisterResponseDto = {
+  status: "ok";
+  registration_mode: "create_workspace" | "wait_for_invite";
+  user: { id: number; username: string };
+  workspace: { id: number; code: string; name: string } | null;
+  message: string;
 };
 
 export type AuditLogRowDto = {
@@ -52,6 +63,8 @@ export type V1SyncRunItem = {
   id: number;
   workspace_id?: number | null;
   connection_id: number | null;
+  /** Доменное подключение (Фаза 4); для ELT-триггеров */
+  domain_connection_id?: number | null;
   integration_code: string;
   stream_name: string;
   status: string;
@@ -62,6 +75,12 @@ export type V1SyncRunItem = {
   error_message: string | null;
   created_at: string | null;
   updated_at: string | null;
+  /** Записей записано в приёмник (из elt_summary) */
+  records_written?: number;
+  /** Проблем нормализации за запуск */
+  issues_count?: number;
+  /** Фактическая длительность ELT, мс (если started_at/finished_at совпали в транзакции) */
+  duration_ms?: number;
   load_destination?: { connector_code: string; name: string };
 };
 
@@ -103,11 +122,16 @@ export type NormIssueRowDto = {
   created_at: string | null;
 };
 
+/** Ответ GET /api/v1/workspaces */
 export type WorkspaceItemDto = {
-  org_code: string;
-  org_name: string;
-  workspace_code: string;
-  workspace_name: string;
+  id: number;
+  code: string;
+  name: string;
+  is_admin: boolean;
+  permissions: string[];
+  /** @deprecated используйте code */
+  workspace_code?: string;
+  workspace_name?: string;
 };
 
 export type AdminUserRowDto = {
@@ -198,6 +222,13 @@ export type EltDestinationCreatePayload = {
   config: Record<string, unknown>;
 };
 
+export type EltSourceCreatePayload = {
+  workspace_code: string;
+  name: string;
+  connector_code: string;
+  config: Record<string, unknown>;
+};
+
 export type EltCheckResponseDto = {
   ok: boolean;
   message: string;
@@ -218,6 +249,23 @@ export type IngestCatalogDto = {
 
 export type EltDiscoverResponseDto = {
   catalog: IngestCatalogDto;
+  layout?: "flat" | "entities";
+  entity_labels?: Record<string, string>;
+  stream_defaults?: Array<{
+    stream_name: string;
+    sync_mode: string;
+    destination_sync_mode?: string;
+    cursor_field: string | string[] | null;
+    primary_key?: string | string[] | null;
+  }>;
+};
+
+export type EltConnectionColumnRuleDto = {
+  entity: string | null;
+  source_field: string;
+  target_field: string;
+  type: string;
+  required: boolean;
 };
 
 export type EltConnectionStreamRowDto = {
@@ -225,8 +273,9 @@ export type EltConnectionStreamRowDto = {
   connection_id: number;
   stream_name: string;
   sync_mode: string;
-  cursor_field: string | null;
-  primary_key: string | null;
+  destination_sync_mode?: string | null;
+  cursor_field: string | string[] | null;
+  primary_key: string | string[] | null;
   is_enabled: boolean;
   cursor_value: string | null;
   mapping_profile_id: number | null;
@@ -248,6 +297,23 @@ export type EltConnectionDetailDto = {
   updated_at?: string | null;
   stream_count?: number;
   streams?: EltConnectionStreamRowDto[];
+  /** Present on list_connections when backend JOINs source/destination */
+  source_name?: string | null;
+  source_connector_code?: string | null;
+  destination_name?: string | null;
+  destination_connector_code?: string | null;
+  wizard_meta?: Record<string, unknown> | null;
+  column_rules?: EltConnectionColumnRuleDto[];
+};
+
+export type EltConnectionPatchPayload = {
+  workspace_code?: string;
+  name?: string | null;
+  description?: string | null;
+  status?: string | null;
+  schedule_cron?: string | null;
+  timezone?: string | null;
+  is_active?: boolean | null;
 };
 
 export type EltConnectionCreatePayload = {
@@ -261,11 +327,14 @@ export type EltConnectionCreatePayload = {
   streams: Array<{
     stream_name: string;
     sync_mode: string;
-    cursor_field?: string | null;
-    primary_key?: string | null;
+    destination_sync_mode?: string | null;
+    cursor_field?: string | string[] | null;
+    primary_key?: string | string[] | null;
     is_enabled?: boolean;
     mapping_profile_id?: number | null;
   }>;
+  column_rules?: EltConnectionColumnRuleDto[];
+  wizard_meta?: Record<string, unknown> | null;
 };
 
 export type EltConnectionTriggerResponseDto = {

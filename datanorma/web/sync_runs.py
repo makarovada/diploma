@@ -18,6 +18,11 @@ SYNC_RUN_STATUSES = {"queued", "running", "success", "failed", "cancelled"}
 TERMINAL_STATUSES = {"success", "failed", "cancelled"}
 RUNNING_STATUSES = {"queued", "running"}
 
+_SYNC_RUN_COLS = (
+    "id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, "
+    "dagster_run_id, started_at, finished_at, triggered_by, error_message, created_at, updated_at, meta"
+)
+
 _DAGSTER_STATUS_MAP = {
     "QUEUED": "queued",
     "STARTED": "running",
@@ -158,6 +163,43 @@ def launch_dagster_run(
     raise SyncRunError(str(message))
 
 
+def _parse_sync_run_meta(raw: Any) -> dict[str, Any]:
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def public_sync_run_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Обогатить sync_run для API: записи, проблемы, длительность из meta."""
+    out = dict(row)
+    meta = _parse_sync_run_meta(out.get("meta"))
+    summary = meta.get("elt_summary") if isinstance(meta.get("elt_summary"), dict) else {}
+    out["records_written"] = int(summary.get("total_rows_written") or 0)
+    out["issues_count"] = int(summary.get("total_issues") or 0)
+
+    duration_ms = meta.get("duration_ms")
+    if duration_ms is not None:
+        try:
+            out["duration_ms"] = max(0, int(duration_ms))
+        except (TypeError, ValueError):
+            pass
+    elif out.get("started_at") and out.get("finished_at"):
+        try:
+            started = out["started_at"]
+            finished = out["finished_at"]
+            if hasattr(started, "timestamp") and hasattr(finished, "timestamp"):
+                out["duration_ms"] = max(0, int((finished - started).total_seconds() * 1000))
+        except Exception:
+            pass
+    return out
+
+
 def fetch_dagster_run_status(dagster_run_id: str) -> tuple[str, datetime | None]:
     query = """
     query PipelineRunStatus($runId: ID!) {
@@ -194,8 +236,7 @@ def create_sync_run(
         text(
             "INSERT INTO sync_run (workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, triggered_by, meta, created_at, updated_at) "
             "VALUES (:wid, :cid, :dcid, :ic, :sn, 'queued', :tb, CAST(:meta AS jsonb), NOW(), NOW()) "
-            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-            "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
+            f"RETURNING {_SYNC_RUN_COLS}"
         ),
         {
             "wid": workspace_id,
@@ -207,33 +248,66 @@ def create_sync_run(
             "meta": json.dumps({"note": note or ""}, ensure_ascii=False),
         },
     ).mappings().one()
-    return dict(row)
+    return public_sync_run_row(dict(row))
 
 
 def mark_sync_run_running(conn: Connection, run_id: int, dagster_run_id: str) -> dict[str, Any]:
     row = conn.execute(
         text(
-            "UPDATE sync_run SET status = 'running', dagster_run_id = :drid, started_at = COALESCE(started_at, NOW()), "
-            "updated_at = NOW(), error_message = NULL WHERE id = :id "
-            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-            "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
+            "UPDATE sync_run SET status = 'running', dagster_run_id = :drid, "
+            "started_at = COALESCE(started_at, clock_timestamp()), "
+            "updated_at = clock_timestamp(), error_message = NULL WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
         ),
         {"id": run_id, "drid": dagster_run_id},
     ).mappings().one()
-    return dict(row)
+    return public_sync_run_row(dict(row))
 
 
 def mark_sync_run_failed(conn: Connection, run_id: int, message: str) -> dict[str, Any]:
     row = conn.execute(
         text(
-            "UPDATE sync_run SET status = 'failed', finished_at = COALESCE(finished_at, NOW()), "
-            "updated_at = NOW(), error_message = :msg WHERE id = :id "
-            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-            "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
+            "UPDATE sync_run SET status = 'failed', finished_at = COALESCE(finished_at, clock_timestamp()), "
+            "updated_at = clock_timestamp(), error_message = :msg WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
         ),
         {"id": run_id, "msg": message[:3000]},
     ).mappings().one()
-    return dict(row)
+    return public_sync_run_row(dict(row))
+
+
+def mark_sync_run_success(
+    conn: Connection,
+    run_id: int,
+    *,
+    meta_patch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    mp = json.dumps(meta_patch or {}, ensure_ascii=False)
+    row = conn.execute(
+        text(
+            "UPDATE sync_run SET status = 'success', finished_at = COALESCE(finished_at, clock_timestamp()), "
+            "updated_at = clock_timestamp(), error_message = NULL, "
+            "meta = COALESCE(meta, '{}'::jsonb) || CAST(:mp AS jsonb), "
+            "dagster_run_id = COALESCE(dagster_run_id, 'elt_inline') "
+            "WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
+        ),
+        {"id": run_id, "mp": mp},
+    ).mappings().one()
+    return public_sync_run_row(dict(row))
+
+
+def mark_sync_run_started_inline(conn: Connection, run_id: int) -> dict[str, Any]:
+    """Запуск без Dagster (локальный ELT)."""
+    row = conn.execute(
+        text(
+            "UPDATE sync_run SET status = 'running', started_at = COALESCE(started_at, clock_timestamp()), "
+            "updated_at = clock_timestamp(), dagster_run_id = 'elt_inline', error_message = NULL WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
+        ),
+        {"id": run_id},
+    ).mappings().one()
+    return public_sync_run_row(dict(row))
 
 
 def resolve_connection(
@@ -316,7 +390,7 @@ def resolve_connection(
 
 def attach_load_destination(conn: Connection, row: dict[str, Any]) -> dict[str, Any]:
     """Добавляет в ответ sync_run сведения о приёмнике (через domain connection)."""
-    out = dict(row)
+    out = public_sync_run_row(dict(row))
     dcid = out.get("domain_connection_id")
     if dcid is None:
         return out
@@ -341,29 +415,25 @@ def list_sync_runs(conn: Connection, limit: int = 50, workspace_id: int | None =
     ws_clause = "WHERE workspace_id = :wid " if workspace_id is not None else ""
     rows = conn.execute(
         text(
-            "SELECT id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-            "started_at, finished_at, triggered_by, error_message, created_at, updated_at "
-            "FROM sync_run "
+            f"SELECT {_SYNC_RUN_COLS} FROM sync_run "
             f"{ws_clause}"
             "ORDER BY id DESC LIMIT :lim"
         ),
         {"lim": lim, "wid": workspace_id},
     ).mappings().all()
-    return [dict(r) for r in rows]
+    return [public_sync_run_row(dict(r)) for r in rows]
 
 
 def get_sync_run(conn: Connection, run_id: int, workspace_id: int | None = None) -> dict[str, Any] | None:
     ws_clause = " AND workspace_id = :wid" if workspace_id is not None else ""
     row = conn.execute(
         text(
-            "SELECT id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-            "started_at, finished_at, triggered_by, error_message, created_at, updated_at "
-            "FROM sync_run WHERE id = :id"
+            f"SELECT {_SYNC_RUN_COLS} FROM sync_run WHERE id = :id"
             f"{ws_clause}"
         ),
         {"id": run_id, "wid": workspace_id},
     ).mappings().first()
-    return dict(row) if row else None
+    return public_sync_run_row(dict(row)) if row else None
 
 
 def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, Any]:
@@ -381,23 +451,21 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
     if status in TERMINAL_STATUSES:
         row = conn.execute(
             text(
-                "UPDATE sync_run SET status = :st, finished_at = COALESCE(:fa, finished_at, NOW()), "
-                "updated_at = NOW() WHERE id = :id "
-                "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-                "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
+                "UPDATE sync_run SET status = :st, finished_at = COALESCE(:fa, finished_at, clock_timestamp()), "
+                "updated_at = clock_timestamp() WHERE id = :id "
+                f"RETURNING {_SYNC_RUN_COLS}"
             ),
             {"id": run["id"], "st": status, "fa": finished_at},
         ).mappings().one()
-        return dict(row)
+        return public_sync_run_row(dict(row))
     row = conn.execute(
         text(
-            "UPDATE sync_run SET status = :st, updated_at = NOW() WHERE id = :id "
-            "RETURNING id, workspace_id, connection_id, domain_connection_id, integration_code, stream_name, status, dagster_run_id, "
-            "started_at, finished_at, triggered_by, error_message, created_at, updated_at"
+            "UPDATE sync_run SET status = :st, updated_at = clock_timestamp() WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
         ),
         {"id": run["id"], "st": status},
     ).mappings().one()
-    return dict(row)
+    return public_sync_run_row(dict(row))
 
 
 def refresh_recent_sync_runs(conn: Connection, limit: int = 50, workspace_id: int | None = None) -> list[dict[str, Any]]:

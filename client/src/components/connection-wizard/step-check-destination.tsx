@@ -24,7 +24,7 @@ export function StepCheckDestination({ check, checking, onRunCheck, checkError }
       ) : null}
       {check ? (
         <div
-          className={`mt-4 rounded-md border p-3 text-sm ${check.ok ? "border-green-600/40 bg-green-500/5" : "border-destructive/40 bg-destructive/5"}`}
+          className={`mt-4 rounded-md p-3 text-sm ${check.ok ? "surface-ok" : "surface-error"}`}
           data-testid="result-check-destination"
         >
           <p className="font-medium" data-testid="text-check-destination-status">

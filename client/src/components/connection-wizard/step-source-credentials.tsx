@@ -26,7 +26,7 @@ export function StepSourceCredentials({
         «Сохранить конфигурацию», затем перейдите к проверке.
       </p>
       {needsPersist ? (
-        <p className="mb-2 text-sm text-amber-700 dark:text-amber-400" data-testid="hint-credentials-unsaved">
+        <p className="mb-2 text-sm text-hint" data-testid="hint-credentials-unsaved">
           Сохраните конфигурацию на сервере, чтобы перейти к следующему шагу.
         </p>
       ) : null}

@@ -12,6 +12,7 @@ import {
 } from "@/lib/api-client";
 import { fetchAuthMe, postAuthLogin } from "@/lib/auth";
 import type { MeDto } from "@/lib/api-types";
+import { hasGoogleOAuthCallback } from "@/lib/oauth-return";
 import { currentHashRoutePath, safeReturnPath } from "@/lib/route-utils";
 
 export type MeUser = MeDto;
@@ -93,6 +94,9 @@ export function AuthProvider({ children }: PropsWithChildren) {
   useEffect(() => {
     configureApiAuth({
       on401: () => {
+        if (hasGoogleOAuthCallback()) {
+          return;
+        }
         clearStoredToken();
         clearStoredWorkspaceId();
         setUser(null);

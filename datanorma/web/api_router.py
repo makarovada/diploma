@@ -22,6 +22,7 @@ from datanorma.web.deps import (
     get_current_user,
     get_engine_cached,
     require_operation,
+    require_permission,
     require_request_workspace_id,
     resolve_actor_user_id,
     resolve_effective_workspace_id,
@@ -39,24 +40,30 @@ from datanorma.web.mapping_profiles import (
     rollback_to_version,
 )
 from datanorma.web.passwords import hash_password, is_legacy_sha256_hash, verify_password
-from datanorma.web.rbac_matrix import ROLE_PLATFORM_ADMIN, matrix_payload
+from datanorma.web.permission_catalog import PERM_AUDIT_READ, PERM_CONNECTION_UPDATE
+from datanorma.web.deps import WorkspacePrincipal, get_workspace_principal
+from datanorma.web.permission_service import effective_permissions_for_user
+from datanorma.web.api_workspaces import register_workspace_routes
+from datanorma.web.api_resource_grants import register_resource_grant_routes
+from datanorma.web.sync_launch import build_sync_audit_payload, launch_sync_run_via_dagster
 from datanorma.web.sync_runs import (
     SyncRunError,
     attach_load_destination,
     create_sync_run,
     get_sync_run,
-    launch_dagster_run,
     mark_sync_run_failed,
-    mark_sync_run_running,
     refresh_recent_sync_runs,
     refresh_sync_run_status,
     resolve_connection,
 )
-from datanorma.web.sql_util import typed_table_sql, warehouse_table_sql
+from datanorma.web.sql_util import typed_table_sql, warehouse_row_count, warehouse_table_sql
 from datanorma.web.api_v1_catalog import register_api_v1_catalog_routes
 from datanorma.web.api_elt import get_elt_workspace_id, register_elt_routes
 from datanorma.web.elt_repo import list_destinations, public_destination_payload
+from datanorma.web.workspace_repo import create_workspace
 from datanorma.web.users_repo import (
+    assign_role_to_user,
+    create_user,
     list_all_workspace_ids,
     list_roles,
     list_users_with_roles,
@@ -261,6 +268,15 @@ class LoginBody(BaseModel):
     password: str = Field(min_length=1, max_length=256)
 
 
+class RegisterBody(BaseModel):
+    username: str = Field(min_length=3, max_length=128, pattern=r"^[a-zA-Z0-9._-]+$")
+    email: str | None = Field(default=None, max_length=255)
+    password: str = Field(min_length=8, max_length=256)
+    registration_mode: str = Field(pattern="^(create_workspace|wait_for_invite)$")
+    workspace_name: str | None = Field(default=None, min_length=1, max_length=255)
+    workspace_code: str | None = Field(default=None, min_length=1, max_length=64, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+
+
 @router.post("/auth/login")
 def auth_login(
     body: LoginBody,
@@ -288,10 +304,7 @@ def auth_login(
     if is_legacy_sha256_hash(user.password_hash):
         update_user_password_hash(conn, user.id, hash_password(body.password))
     member_ws = load_user_workspaces(conn, user.id)
-    if ROLE_PLATFORM_ADMIN in user.roles:
-        allowed_ids = list_all_workspace_ids(conn) or [w["id"] for w in member_ws]
-    else:
-        allowed_ids = [w["id"] for w in member_ws]
+    allowed_ids = [w["id"] for w in member_ws]
     if not allowed_ids:
         record_audit_event(
             eng,
@@ -329,6 +342,86 @@ def auth_login(
     return {"access_token": token, "token_type": "bearer"}
 
 
+@router.post("/auth/register", status_code=status.HTTP_201_CREATED)
+def auth_register(
+    body: RegisterBody,
+    request: Request,
+    conn: Annotated[Connection, Depends(get_conn)],
+) -> dict[str, Any]:
+    username = body.username.strip()
+    if load_user_by_username(conn, username) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_code": "username_exists", "message": "Пользователь с таким логином уже существует"},
+        )
+
+    try:
+        user_id = create_user(
+            conn,
+            username=username,
+            email=(body.email or "").strip() or None,
+            password_hash=hash_password(body.password),
+        )
+    except Exception as exc:
+        if "unique" in str(exc).lower():
+            raise HTTPException(
+                status_code=409,
+                detail={"error_code": "username_exists", "message": "Пользователь с таким логином уже существует"},
+            ) from exc
+        raise
+
+    assign_role_to_user(conn, user_id=user_id, role_name="analyst")
+    workspace: dict[str, Any] | None = None
+    if body.registration_mode == "create_workspace":
+        ws_code = (body.workspace_code or "").strip() or username.lower().replace(".", "-")
+        ws_name = (body.workspace_name or "").strip() or f"Workspace {username}"
+        try:
+            workspace = create_workspace(
+                conn,
+                code=ws_code,
+                name=ws_name,
+                created_by_user_id=user_id,
+            )
+        except Exception as exc:
+            if "uq_workspace" in str(exc).lower() or "unique" in str(exc).lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail={"error_code": "workspace_code_exists", "message": "Код пространства уже занят"},
+                ) from exc
+            raise
+
+    record_audit_event(
+        get_engine_cached(),
+        workspace_id=int(workspace["id"]) if workspace else None,
+        actor_user_id=user_id,
+        action="register_success",
+        resource_type="auth",
+        resource_id=username,
+        result="success",
+        payload={
+            "registration_mode": body.registration_mode,
+            "workspace_id": int(workspace["id"]) if workspace else None,
+        },
+        ip_address=client_ip(request),
+        user_agent=client_user_agent(request),
+    )
+    return {
+        "status": "ok",
+        "registration_mode": body.registration_mode,
+        "user": {"id": user_id, "username": username},
+        "workspace": (
+            {"id": int(workspace["id"]), "code": str(workspace["code"]), "name": str(workspace["name"])}
+            if workspace
+            else None
+        ),
+        "message": (
+            "Аккаунт создан, ожидайте добавления в существующий workspace."
+            if body.registration_mode == "wait_for_invite"
+            else "Аккаунт и workspace созданы."
+        ),
+    }
+
+
 @router.get("/auth/me")
 def auth_me(
     user: Annotated[AuthUser, Depends(get_current_user)],
@@ -340,18 +433,27 @@ def auth_me(
         active = resolve_effective_workspace_id(conn, user, x_workspace_id)
     except HTTPException:
         active = workspaces[0]["id"] if workspaces else None
+    is_admin = False
+    permissions: list[str] = []
+    if active is not None and user.user_id is not None:
+        is_admin, permissions = effective_permissions_for_user(
+            conn, user_id=user.user_id, workspace_id=active
+        )
+    elif active is not None:
+        uid = resolve_actor_user_id(conn, user)
+        if uid is not None:
+            is_admin, permissions = effective_permissions_for_user(
+                conn, user_id=uid, workspace_id=active
+            )
     return {
         "username": user.username,
         "roles": sorted(user.roles),
         "user_id": user.user_id,
         "workspaces": workspaces,
         "active_workspace_id": active,
+        "is_workspace_admin": is_admin,
+        "permissions": permissions,
     }
-
-
-@router.get("/rbac/matrix")
-def rbac_matrix(_: Annotated[AuthUser, Depends(require_operation("view_rbac_matrix"))]) -> dict[str, Any]:
-    return matrix_payload()
 
 
 @router.get("/meta/dagster-url")
@@ -414,69 +516,13 @@ def data_destinations_catalog(
     conn: Annotated[Connection, Depends(get_conn)],
     workspace_code: str = "main",
 ) -> dict[str, Any]:
-    """Каталог приёмников для React SPA: витрина + записи ELT destination."""
-    t = warehouse_table_sql()
-    n_rows = int(conn.execute(text(f"SELECT COUNT(*) FROM {t}")).scalar_one())
-    sync_n = int(conn.execute(text("SELECT COUNT(*) FROM sync_state")).scalar_one())
-    last_u = conn.execute(text("SELECT MAX(updated_at) FROM sync_state")).scalar()
-    last_label = "—"
-    if last_u is not None:
-        last_label = last_u.isoformat() if hasattr(last_u, "isoformat") else str(last_u)
+    """Каталог приёмников для React SPA: записи ELT destination."""
+    n_rows = warehouse_row_count(conn)
 
-    items: list[dict[str, Any]] = [
-        {
-            "id": "legacy-postgres",
-            "name": "PostgreSQL (warehouse)",
-            "type": "PostgreSQL",
-            "connector_code": "postgres",
-            "status": "ok",
-            "schema_or_db": f"warehouse / {t}",
-            "last_used_label": last_label,
-            "connection_count": sync_n,
-        },
-        {
-            "id": "legacy-csv",
-            "name": "CSV file",
-            "type": "CSV",
-            "connector_code": "csv",
-            "status": "ok",
-            "schema_or_db": "экспорт /api/data/export-sales-csv",
-            "last_used_label": "—",
-            "connection_count": 0,
-        },
-        {
-            "id": "legacy-xlsx",
-            "name": "Excel (.xlsx)",
-            "type": "XLSX",
-            "connector_code": "xlsx",
-            "status": "ok",
-            "schema_or_db": "файл (Jinja /app/warehouse)",
-            "last_used_label": "—",
-            "connection_count": 0,
-        },
-        {
-            "id": "legacy-json",
-            "name": "JSON",
-            "type": "JSON",
-            "connector_code": "json",
-            "status": "ok",
-            "schema_or_db": "API-friendly выгрузка",
-            "last_used_label": "—",
-            "connection_count": 0,
-        },
-        {
-            "id": "legacy-xml",
-            "name": "XML",
-            "type": "XML",
-            "connector_code": "xml",
-            "status": "ok",
-            "schema_or_db": "legacy / EDI",
-            "last_used_label": "—",
-            "connection_count": 0,
-        },
-    ]
+    items: list[dict[str, Any]] = []
 
-    wid = get_elt_workspace_id(conn, user, workspace_code)
+    wid = resolve_effective_workspace_id(conn, user, None)
+    _ = workspace_code
     for drow in list_destinations(conn, workspace_id=wid):
         pl = public_destination_payload(drow)
         cc = str(pl["connector_code"])
@@ -1160,13 +1206,13 @@ def v1_sync_trigger(
     )
     run_id = int(row["id"])
     try:
-        launch = launch_dagster_run(
-            sync_run_id=run_id,
+        row = launch_sync_run_via_dagster(
+            conn=conn,
+            run_id=run_id,
             integration_code=integration_code,
             stream_name=stream_name,
             triggered_by=user.username,
         )
-        row = mark_sync_run_running(conn, run_id=run_id, dagster_run_id=launch.run_id)
     except SyncRunError as exc:
         row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
         _audit_api(
@@ -1178,12 +1224,13 @@ def v1_sync_trigger(
             resource_type="sync_run",
             resource_id=str(run_id),
             result="failure",
-            payload={
-                "integration_code": integration_code,
-                "stream_name": stream_name,
-                "error": str(exc),
-                "domain_connection_id": domain_cid,
-            },
+            payload=build_sync_audit_payload(
+                execution_mode="dagster",
+                integration_code=integration_code,
+                stream_name=stream_name,
+                domain_connection_id=domain_cid,
+                error=str(exc),
+            ),
         )
         raise HTTPException(
             status_code=502,
@@ -1202,12 +1249,13 @@ def v1_sync_trigger(
         action="trigger_sync",
         resource_type="sync_run",
         resource_id=str(run_id),
-        payload={
-            "integration_code": integration_code,
-            "stream_name": stream_name,
-            "domain_connection_id": domain_cid,
-            "dagster_run_id": row.get("dagster_run_id"),
-        },
+        payload=build_sync_audit_payload(
+            execution_mode="dagster",
+            integration_code=integration_code,
+            stream_name=stream_name,
+            domain_connection_id=domain_cid,
+            dagster_run_id=row.get("dagster_run_id"),
+        ),
     )
     return {
         "status": "accepted",
@@ -1349,13 +1397,13 @@ def v1_sync_retry(
     )
     new_id = int(row["id"])
     try:
-        launch = launch_dagster_run(
-            sync_run_id=new_id,
+        row = launch_sync_run_via_dagster(
+            conn=conn,
+            run_id=new_id,
             integration_code=old.get("integration_code"),
             stream_name=old.get("stream_name"),
             triggered_by=user.username,
         )
-        row = mark_sync_run_running(conn, run_id=new_id, dagster_run_id=launch.run_id)
     except SyncRunError as exc:
         row = mark_sync_run_failed(conn, run_id=new_id, message=str(exc))
         _audit_api(
@@ -1367,7 +1415,11 @@ def v1_sync_retry(
             resource_type="sync_run",
             resource_id=str(new_id),
             result="failure",
-            payload={"retry_of": run_id, "error": str(exc)},
+            payload=build_sync_audit_payload(
+                execution_mode="dagster",
+                retry_of=run_id,
+                error=str(exc),
+            ),
         )
         raise HTTPException(
             status_code=502,
@@ -1385,7 +1437,11 @@ def v1_sync_retry(
         action="trigger_sync_retry",
         resource_type="sync_run",
         resource_id=str(new_id),
-        payload={"retry_of": run_id, "dagster_run_id": row.get("dagster_run_id")},
+        payload=build_sync_audit_payload(
+            execution_mode="dagster",
+            retry_of=run_id,
+            dagster_run_id=row.get("dagster_run_id"),
+        ),
     )
     return {"status": "accepted", "run_id": new_id, "sync_run": row}
 
@@ -1395,7 +1451,7 @@ def v1_issue_resolve(
     issue_id: int,
     body: IssueActionBody,
     request: Request,
-    user: Annotated[AuthUser, Depends(require_operation("manage_issues_api"))],
+    principal: Annotated[WorkspacePrincipal, Depends(require_permission(PERM_CONNECTION_UPDATE))],
     conn: Annotated[Connection, Depends(get_conn)],
     workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
@@ -1405,14 +1461,14 @@ def v1_issue_resolve(
             "resolved_by = :rb, resolution_note = :note WHERE id = :id AND workspace_id = :wid "
             "RETURNING id, COALESCE(status, 'open') AS status, resolved_at, resolved_by, resolution_note"
         ),
-        {"id": issue_id, "wid": workspace_id, "rb": user.username, "note": (body.note or "").strip() or None},
+        {"id": issue_id, "wid": workspace_id, "rb": principal.user.username, "note": (body.note or "").strip() or None},
     ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail={"error_code": "issue_not_found"})
     _audit_api(
         conn,
         request,
-        user,
+        principal.user,
         workspace_id=workspace_id,
         action="normalization_issue_resolve",
         resource_type="normalization_issue",
@@ -1427,7 +1483,7 @@ def v1_issue_ignore(
     issue_id: int,
     body: IssueActionBody,
     request: Request,
-    user: Annotated[AuthUser, Depends(require_operation("manage_issues_api"))],
+    principal: Annotated[WorkspacePrincipal, Depends(require_permission(PERM_CONNECTION_UPDATE))],
     conn: Annotated[Connection, Depends(get_conn)],
     workspace_id: Annotated[int, Depends(require_request_workspace_id)],
 ) -> dict[str, Any]:
@@ -1437,14 +1493,14 @@ def v1_issue_ignore(
             "resolved_by = :rb, resolution_note = :note WHERE id = :id AND workspace_id = :wid "
             "RETURNING id, COALESCE(status, 'open') AS status, resolved_at, resolved_by, resolution_note"
         ),
-        {"id": issue_id, "wid": workspace_id, "rb": user.username, "note": (body.note or "").strip() or None},
+        {"id": issue_id, "wid": workspace_id, "rb": principal.user.username, "note": (body.note or "").strip() or None},
     ).mappings().first()
     if row is None:
         raise HTTPException(status_code=404, detail={"error_code": "issue_not_found"})
     _audit_api(
         conn,
         request,
-        user,
+        principal.user,
         workspace_id=workspace_id,
         action="normalization_issue_ignore",
         resource_type="normalization_issue",
@@ -1454,80 +1510,9 @@ def v1_issue_ignore(
     return {"item": dict(row)}
 
 
-@v1.get("/workspaces")
-def v1_workspaces_list(
-    _: Annotated[AuthUser, Depends(require_operation("view_workspaces"))],
-    conn: Annotated[Connection, Depends(get_conn)],
-) -> dict[str, Any]:
-    rows = conn.execute(
-        text(
-            "SELECT o.code AS org_code, o.name AS org_name, w.code AS workspace_code, w.name AS workspace_name "
-            "FROM workspace w JOIN organization o ON o.id = w.organization_id "
-            "ORDER BY o.code, w.code"
-        )
-    ).mappings().all()
-    return {"items": [dict(r) for r in rows]}
-
-
-@v1.post("/workspaces")
-def v1_workspaces_create(
-    body: WorkspaceCreateBody,
-    request: Request,
-    user: Annotated[AuthUser, Depends(require_operation("manage_workspaces"))],
-    conn: Annotated[Connection, Depends(get_conn)],
-) -> dict[str, Any]:
-    org_code = body.org_code.strip()
-    ws_code = body.workspace_code.strip()
-    conn.execute(
-        text(
-            "INSERT INTO organization(code, name) VALUES (:c, :n) "
-            "ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name"
-        ),
-        {"c": org_code, "n": body.org_name.strip()},
-    )
-    conn.execute(
-        text(
-            "INSERT INTO workspace(organization_id, code, name) "
-            "SELECT o.id, :wc, :wn FROM organization o WHERE o.code = :oc "
-            "ON CONFLICT ON CONSTRAINT uq_workspace_org_code DO UPDATE SET name = EXCLUDED.name"
-        ),
-        {"oc": org_code, "wc": ws_code, "wn": body.workspace_name.strip()},
-    )
-    conn.execute(
-        text(
-            "INSERT INTO user_workspace(user_id, workspace_id) "
-            "SELECT u.id, w.id FROM app_user u "
-            "JOIN workspace w ON w.code = :wc "
-            "JOIN organization o ON o.id = w.organization_id AND o.code = :oc "
-            "WHERE u.username = :un "
-            "ON CONFLICT (user_id, workspace_id) DO NOTHING"
-        ),
-        {"wc": ws_code, "oc": org_code, "un": user.username},
-    )
-    new_wid = conn.execute(
-        text(
-            "SELECT w.id FROM workspace w JOIN organization o ON o.id = w.organization_id "
-            "WHERE o.code = :oc AND w.code = :wc"
-        ),
-        {"oc": org_code, "wc": ws_code},
-    ).scalar()
-    if new_wid is not None:
-        _audit_api(
-            conn,
-            request,
-            user,
-            workspace_id=int(new_wid),
-            action="workspace_create",
-            resource_type="workspace",
-            resource_id=ws_code,
-            payload={"org_code": org_code},
-        )
-    return {"status": "ok", "org_code": org_code, "workspace_code": ws_code}
-
-
 @v1.get("/audit-log")
 def v1_audit_log_list(
-    _: Annotated[AuthUser, Depends(require_operation("view_audit_log"))],
+    _: Annotated[AuthUser, Depends(require_permission(PERM_AUDIT_READ))],
     conn: Annotated[Connection, Depends(get_conn)],
     workspace_id: int | None = None,
     actor: str | None = None,
@@ -1556,5 +1541,7 @@ def v1_audit_log_list(
 
 register_api_v1_catalog_routes(v1)
 register_elt_routes(v1)
+register_workspace_routes(v1)
+register_resource_grant_routes(v1)
 
 router.include_router(v1)

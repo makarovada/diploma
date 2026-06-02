@@ -1,4 +1,5 @@
-import type { WizardFormState } from "@/components/connection-wizard/wizard-types";
+import type { StreamDefaultDto, WizardFormState } from "@/components/connection-wizard/wizard-types";
+import { REPLICATION_PRESETS, replicationPresetFromFields } from "@/lib/destination-sync-mode";
 
 export function credentialsJsonError(text: string): string | null {
   try {
@@ -9,14 +10,22 @@ export function credentialsJsonError(text: string): string | null {
   }
 }
 
-function streamIncrementalOk(s: WizardFormState): boolean {
-  for (const name of s.enabledStreamNames) {
-    const opt = s.streamOptions[name];
-    if (opt?.sync_mode === "incremental" && !(opt.cursor_field?.trim())) {
-      return false;
-    }
-  }
+function streamReplicationValid(st: StreamDefaultDto): boolean {
+  const preset = REPLICATION_PRESETS.find(
+    (p) => p.id === replicationPresetFromFields(st.sync_mode, st.destination_sync_mode),
+  );
+  if (!preset) return false;
+  if (preset.needsCursor && (st.cursor_field ?? []).length === 0) return false;
+  if (preset.needsPrimaryKey && (st.primary_key ?? []).length === 0) return false;
   return true;
+}
+
+function selectedSchemaKeys(s: WizardFormState): string[] {
+  if (s.schemaLayout === "flat") {
+    const first = s.discovery?.streams?.[0]?.name;
+    return first ? [first] : [];
+  }
+  return s.selectedEntities;
 }
 
 /** true = Next должен быть отключён */
@@ -32,12 +41,12 @@ export function stepBlocksNext(step: number, s: WizardFormState): boolean {
       );
     case 1: {
       if (!s.discovery?.streams?.length) return true;
-      if (s.enabledStreamNames.length === 0) return true;
-      if (!streamIncrementalOk(s)) return true;
-
-      if (s.mappingRows.length === 0) return true;
-      const missing = s.mappingRows.filter((r) => r.required && !r.targetField.trim());
-      return missing.length > 0;
+      const keys = selectedSchemaKeys(s);
+      if (keys.length === 0) return true;
+      if (s.columnRuleRows.length === 0) return true;
+      const active = s.streamDefaults.filter((d) => keys.includes(d.stream_name));
+      if (active.length !== keys.length) return true;
+      return !active.every(streamReplicationValid);
     }
     case 2:
       return s.destinationId == null || !s.destinationCheck?.ok;

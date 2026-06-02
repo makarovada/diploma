@@ -37,7 +37,7 @@
 <body>
   <div id="login">
     <h1>Вход — SPA на <code>/ui/</code></h1>
-    <p class="meta">Те же роли и API, что у Jinja2-консоли (Sources / Destinations / Connections — в основном клиенте). Учётки после <code>python scripts/seed_database.py</code>:<br/>
+    <p class="meta">Демо-консоль поверх того же API. Учётки после <code>python scripts/seed_database.py</code>:<br/>
       <strong>seed_admin</strong> / AdminDemo2026<br/>
       <strong>seed_integrator</strong> / IntegratorDemo2026<br/>
       <strong>seed_analyst</strong> / AnalystDemo2026</p>
@@ -132,7 +132,7 @@
 
     function buildNav() {
       const nav = document.getElementById("nav");
-      nav.innerHTML = "<h2>Monitor &amp; data (API)</h2><p class=\"meta\" style=\"font-size:0.75rem;margin:0 0 0.75rem 0;\">Полный UI с группами — <code>/app/dashboard</code></p>";
+      nav.innerHTML = "<h2>Monitor &amp; data (API)</h2><p class=\"meta\" style=\"font-size:0.75rem;margin:0 0 0.75rem 0;\">Продуктовый UI — <code>/ui/</code> (Vite/React в репозитории)</p>";
       SCREENS.forEach(s => {
         const b = document.createElement("button");
         b.textContent = s.id + ". " + s.title;

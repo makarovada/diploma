@@ -61,15 +61,6 @@ export type MappingRow = {
   state: "mapped" | "unmapped" | "required_missing" | "type_mismatch";
 };
 
-export type NormalizationRule = {
-  id: string;
-  title: string;
-  enabled: boolean;
-  fixedCount: number;
-  issuesCount: number;
-  description: string;
-};
-
 export type Source = {
   id: string;
   name: string;
