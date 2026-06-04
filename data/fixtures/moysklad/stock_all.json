@@ -1,0 +1,23 @@
+{
+  "meta": {"size": 2, "limit": 1000, "offset": 0},
+  "rows": [
+    {
+      "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/product/p1", "type": "product"},
+      "name": "Товар A",
+      "code": "A-001",
+      "stock": 120.0,
+      "reserve": 5.0,
+      "inTransit": 0.0,
+      "quantity": 115.0
+    },
+    {
+      "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/product/p2", "type": "product"},
+      "name": "Товар B",
+      "code": "B-002",
+      "stock": 0.0,
+      "reserve": 0.0,
+      "inTransit": 10.0,
+      "quantity": -0.0
+    }
+  ]
+}

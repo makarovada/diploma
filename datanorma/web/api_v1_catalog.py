@@ -103,14 +103,32 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             },
         }
     if c == "yandex_metrika":
+        # Стримы коннектора: "summary", "visits", "hits", "goals_reaches"
+        # (полный список и дефолты — в connector_schema_meta.connector_stream_defaults).
         return {
             "type": "object",
             "required": ["oauth_token", "counter_id"],
             "properties": {
-                "oauth_token": {"type": "string", "title": "OAuth token", "x-format": "secret"},
-                "counter_id": {"type": "string", "title": "Counter ID"},
-                "lookback_days": {"type": "integer", "title": "Глубина отчёта (дней)", "default": 30, "minimum": 1, "maximum": 365},
-                "date_from": {"type": "string", "title": "date1 (YYYY-MM-DD), опционально"},
+                "oauth_token": {
+                    "type": "string",
+                    "title": "OAuth token",
+                    "x-format": "secret",
+                    "description": "Получить на https://oauth.yandex.ru/ (scope: metrika:read).",
+                },
+                "counter_id": {
+                    "type": "string",
+                    "title": "Counter ID",
+                    "description": "Число из URL счётчика в Метрике, например 12345678.",
+                },
+                "lookback_days": {
+                    "type": "integer",
+                    "title": "Глубина отчёта (дней)",
+                    "default": 30,
+                    "minimum": 1,
+                    "maximum": 365,
+                    "description": "1–365. Используется, если date_from/date_to не заданы.",
+                },
+                "date_from": {"type": "string", "title": "date1 (YYYY-MM-DD), опционально", "description": "Переопределяет lookback_days."},
                 "date_to": {"type": "string", "title": "date2 (YYYY-MM-DD), опционально"},
             },
         }
@@ -128,7 +146,12 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "type": "object",
             "required": ["webhook_url"],
             "properties": {
-                "webhook_url": {"type": "string", "title": "Webhook URL", "format": "uri"},
+                "webhook_url": {
+                    "type": "string",
+                    "title": "Webhook URL",
+                    "format": "uri",
+                    "description": "Bitrix24 → Разработчикам → Входящие вебхуки → URL вебхука (права CRM/Задачи на чтение).",
+                },
             },
         }
     if c == "amocrm":
@@ -136,8 +159,18 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "type": "object",
             "required": ["base_url", "token"],
             "properties": {
-                "base_url": {"type": "string", "title": "Base URL", "format": "uri"},
-                "token": {"type": "string", "title": "Token", "x-format": "secret"},
+                "base_url": {
+                    "type": "string",
+                    "title": "Base URL",
+                    "format": "uri",
+                    "description": "https://yourcompany.amocrm.ru",
+                },
+                "token": {
+                    "type": "string",
+                    "title": "Token",
+                    "x-format": "secret",
+                    "description": "Настройки → Интеграции → Ключи и доступы → Access token (или OAuth2).",
+                },
             },
         }
     if c == "moysklad":
@@ -145,12 +178,36 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
             "type": "object",
             "required": ["token"],
             "properties": {
-                "token": {"type": "string", "title": "Token", "x-format": "secret"},
+                "token": {
+                    "type": "string",
+                    "title": "Token",
+                    "x-format": "secret",
+                    "description": "МойСклад → Настройки → Доступ к API → Создать токен (показывается один раз).",
+                },
                 "lookback_days": {"type": "integer", "title": "Фильтр updated для full_refresh (дней)", "default": 90, "minimum": 1, "maximum": 730},
             },
         }
-    # Destination defaults: минимальная схема.
-    if c in ("postgres", "csv", "xlsx", "clickhouse"):
+    if c == "postgres":
+        return {
+            "type": "object",
+            "required": ["table"],
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "title": "URL подключения",
+                    "description": "Оставьте пустым для DATABASE_URL сервера. Пример: postgresql://user:pass@host:5432/db",
+                },
+                "schema": {"type": "string", "title": "Схема", "default": "public"},
+                "table": {"type": "string", "title": "Таблица", "default": "elt_stream_load"},
+                "primary_key": {
+                    "type": "string",
+                    "title": "Первичный ключ",
+                    "description": "Колонка или список через запятую для upsert.",
+                    "default": "id",
+                },
+            },
+        }
+    if c in ("csv", "xlsx", "clickhouse"):
         return {"type": "object", "properties": {}, "required": []}
 
     # rest_builder: в UI прячем YAML, поэтому просто объект-обертка.

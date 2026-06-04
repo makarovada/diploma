@@ -25,17 +25,23 @@ _ENTITY_LABELS: dict[str, dict[str, str]] = {
         "crm_contacts": "Контакты",
         "crm_leads": "Лиды",
         "crm_companies": "Компании",
+        "crm_tasks": "Задачи",
+        "crm_activities": "Дела",
     },
     "amocrm": {
         "leads": "Сделки",
         "contacts": "Контакты",
         "companies": "Компании",
+        "tasks": "Задачи",
+        "pipelines": "Воронки",
     },
     "moysklad": {
         "demand": "Отгрузки",
         "customerorder": "Заказы покупателей",
         "product": "Товары",
         "counterparty": "Контрагенты",
+        "invoiceout": "Счета покупателям",
+        "stock": "Остатки",
     },
 }
 
@@ -91,12 +97,16 @@ def connector_stream_defaults(code: str) -> list[dict[str, Any]]:
             {"stream_name": "crm_contacts", "sync_mode": "incremental", "cursor_field": "DATE_MODIFY"},
             {"stream_name": "crm_leads", "sync_mode": "incremental", "cursor_field": "DATE_MODIFY"},
             {"stream_name": "crm_companies", "sync_mode": "incremental", "cursor_field": "DATE_MODIFY"},
+            {"stream_name": "crm_tasks", "sync_mode": "incremental", "cursor_field": "CHANGED_DATE"},
+            {"stream_name": "crm_activities", "sync_mode": "incremental", "cursor_field": "LAST_UPDATED"},
         ]
     elif c == "amocrm":
         raw = [
             {"stream_name": "leads", "sync_mode": "incremental", "cursor_field": "updated_at"},
             {"stream_name": "contacts", "sync_mode": "incremental", "cursor_field": "updated_at"},
             {"stream_name": "companies", "sync_mode": "incremental", "cursor_field": "updated_at"},
+            {"stream_name": "tasks", "sync_mode": "incremental", "cursor_field": "complete_till"},
+            {"stream_name": "pipelines", "sync_mode": "full_refresh", "cursor_field": None},
         ]
     elif c == "moysklad":
         raw = [
@@ -104,6 +114,8 @@ def connector_stream_defaults(code: str) -> list[dict[str, Any]]:
             {"stream_name": "customerorder", "sync_mode": "incremental", "cursor_field": "updated"},
             {"stream_name": "product", "sync_mode": "incremental", "cursor_field": "updated"},
             {"stream_name": "counterparty", "sync_mode": "incremental", "cursor_field": "updated"},
+            {"stream_name": "invoiceout", "sync_mode": "incremental", "cursor_field": "updated"},
+            {"stream_name": "stock", "sync_mode": "full_refresh", "cursor_field": None},
         ]
     elif c == "rest_builder":
         raw = [{"stream_name": "rest_stream", "sync_mode": "full_refresh", "cursor_field": None}]

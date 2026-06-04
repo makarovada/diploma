@@ -1,0 +1,10 @@
+{
+  "result": {
+    "ID": 1,
+    "CODE": "datanorma",
+    "INSTALLED": true,
+    "LICENSE": "ru_demo",
+    "STATUS": "L"
+  },
+  "time": {"start": 0.01, "finish": 0.02, "duration": 0.01}
+}

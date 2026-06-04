@@ -1,0 +1,18 @@
+{
+  "_page": 2,
+  "_links": {
+    "self": {"href": "https://test.amocrm.ru/api/v4/leads?page=2&limit=2"}
+  },
+  "_embedded": {
+    "leads": [
+      {
+        "id": 3,
+        "name": "Сделка 3",
+        "price": 5000,
+        "updated_at": 1737021600,
+        "_links": {"self": {"href": "https://test.amocrm.ru/api/v4/leads/3"}},
+        "_embedded": {"tags": [{"id": 13, "name": "new"}], "contacts": [{"id": 103}]}
+      }
+    ]
+  }
+}

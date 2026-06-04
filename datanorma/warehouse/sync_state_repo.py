@@ -69,12 +69,16 @@ def fetch_sync_state_map(engine: Engine) -> dict[tuple[str, str], dict[str, Any]
     ensure_phase1_schema(engine)
     sql = text(
         "SELECT integration_code, stream_name, sync_mode, cursor_field, cursor_value, "
-        "ingest_state, last_success_at, updated_at FROM sync_state"
+        "ingest_state, last_success_at, updated_at, connection_stream_id "
+        "FROM sync_state "
+        "ORDER BY (connection_stream_id IS NULL) DESC, id"
     )
     out: dict[tuple[str, str], dict[str, Any]] = {}
     with engine.connect() as conn:
         for row in conn.execute(sql).mappings().all():
             key = (str(row["integration_code"]), str(row["stream_name"]))
+            if key in out:
+                continue
             out[key] = dict(row)
     return out
 

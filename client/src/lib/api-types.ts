@@ -109,17 +109,25 @@ export type StagingCountsDto = {
 
 export type NormIssueRowDto = {
   id: number;
-  batch_id: string | null;
-  source_system: string | null;
-  source_record_id: string | null;
-  field_name: string | null;
+  sync_run_id?: number | null;
+  connection_id?: number | null;
+  stream_name?: string | null;
+  batch_id?: string | null;
+  source_system?: string | null;
+  connection_name?: string | null;
+  source_record_id?: string | null;
+  field_name?: string | null;
+  target_field?: string | null;
   issue_type: string;
-  message: string | null;
+  error_code?: string | null;
+  message?: string | null;
+  error_text?: string | null;
+  raw_value?: unknown;
   status?: "open" | "resolved" | "ignored";
   resolved_at?: string | null;
   resolution_note?: string | null;
   resolved_by?: string | null;
-  created_at: string | null;
+  created_at?: string | null;
 };
 
 /** Ответ GET /api/v1/workspaces */
@@ -314,6 +322,9 @@ export type EltConnectionPatchPayload = {
   schedule_cron?: string | null;
   timezone?: string | null;
   is_active?: boolean | null;
+  streams?: EltConnectionCreatePayload["streams"];
+  column_rules?: EltConnectionColumnRuleDto[];
+  wizard_meta?: Record<string, unknown> | null;
 };
 
 export type EltConnectionCreatePayload = {

@@ -1,0 +1,7 @@
+{
+  "id": 123456,
+  "name": "Demo Account",
+  "subdomain": "test",
+  "currency": "RUB",
+  "_links": {"self": {"href": "https://test.amocrm.ru/api/v4/account"}}
+}

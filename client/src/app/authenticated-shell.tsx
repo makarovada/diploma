@@ -13,6 +13,7 @@ import { ConnectionLogsPage } from "@/pages/connection-logs";
 import { ConnectionRunsPage } from "@/pages/connection-runs";
 import { ConnectionSettingsPage } from "@/pages/connection-settings";
 import { ConnectionStreamsPage } from "@/pages/connection-streams";
+import { ConnectionStreamsEditPage } from "@/pages/connection-streams-edit";
 import { ConnectionWizardPage } from "@/pages/connection-wizard";
 import { ConnectionsPage } from "@/pages/connections";
 import { ConnectorDetailPage } from "@/pages/connector-detail";
@@ -49,6 +50,7 @@ function MainRoutes() {
 
         <Route path="/connections/new" component={ConnectionWizardPage} />
         <Route path="/connections/:id/edit" component={ConnectionEditPage} />
+        <Route path="/connections/:id/streams/edit" component={ConnectionStreamsEditPage} />
         <Route path="/connections/:id/streams" component={ConnectionStreamsPage} />
         <Route path="/connections/:id/runs" component={ConnectionRunsPage} />
         <Route path="/connections/:id/logs" component={ConnectionLogsPage} />

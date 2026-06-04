@@ -1,0 +1,34 @@
+{
+  "meta": {"size": 1100, "limit": 1000, "offset": 0},
+  "rows": [
+    {
+      "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/aaa", "type": "customerorder"},
+      "id": "aaa",
+      "name": "00001",
+      "updated": "2026-01-15 12:00:00.000",
+      "sum": 150000,
+      "agent": {
+        "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/c1", "type": "counterparty"},
+        "name": "ООО Ромашка"
+      },
+      "organization": {
+        "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/organization/o1", "type": "organization"},
+        "name": "Моя компания"
+      },
+      "positions": {
+        "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/aaa/positions", "type": "customerorderposition", "size": 3}
+      }
+    },
+    {
+      "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/customerorder/bbb", "type": "customerorder"},
+      "id": "bbb",
+      "name": "00002",
+      "updated": "2026-01-16 09:30:00.000",
+      "sum": 42000,
+      "agent": {
+        "meta": {"href": "https://api.moysklad.ru/api/remap/1.2/entity/counterparty/c2", "type": "counterparty"},
+        "name": "ИП Иванов"
+      }
+    }
+  ]
+}

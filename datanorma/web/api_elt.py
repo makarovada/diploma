@@ -70,11 +70,9 @@ from datanorma.web.connector_schema_meta import connector_schema_meta
 from datanorma.web.mapping_profiles import MappingProfileError, resolve_workspace_id
 from datanorma.web.sync_launch import (
     build_sync_audit_payload,
-    launch_sync_run_via_dagster,
-    run_sync_inline_fallback,
+    run_sync_inline_for_connection,
 )
 from datanorma.web.sync_runs import (
-    SyncRunError,
     create_sync_run,
     mark_sync_run_failed,
 )
@@ -198,6 +196,9 @@ class ConnectionPatchBody(BaseModel):
     schedule_cron: str | None = Field(default=None, max_length=128)
     timezone: str | None = Field(default=None, max_length=64)
     is_active: bool | None = None
+    streams: list[ConnectionStreamBody] | None = None
+    column_rules: list[ConnectionColumnRuleBody] | None = None
+    wizard_meta: dict[str, Any] | None = None
 
 
 def register_elt_routes(v1: APIRouter) -> None:
@@ -672,12 +673,19 @@ def register_elt_routes(v1: APIRouter) -> None:
         wid = principal.workspace_id
         patch_fields = body.model_dump(exclude_unset=True)
         patch_fields.pop("workspace_code", None)
-        row = patch_connection_row(
-            conn,
-            workspace_id=wid,
-            connection_id=connection_id,
-            fields=patch_fields,
-        )
+        if "streams" in patch_fields and patch_fields["streams"] is not None:
+            patch_fields["streams"] = [s.model_dump() for s in body.streams or []]
+        if "column_rules" in patch_fields and patch_fields["column_rules"] is not None:
+            patch_fields["column_rules"] = [c.model_dump() for c in body.column_rules or []]
+        try:
+            row = patch_connection_row(
+                conn,
+                workspace_id=wid,
+                connection_id=connection_id,
+                fields=patch_fields,
+            )
+        except EltRepoError as e:
+            raise HTTPException(status_code=422, detail={"error_code": "invalid_connection", "message": str(e)}) from e
         if row is None:
             raise HTTPException(status_code=404, detail={"error_code": "connection_not_found"})
         _audit_elt(
@@ -690,7 +698,7 @@ def register_elt_routes(v1: APIRouter) -> None:
             resource_id=str(connection_id),
             payload={"status": row.get("status"), "is_active": row.get("is_active")},
         )
-        return {"item": row}
+        return {"item": public_connection_payload(conn, row)}
 
     @v1.delete("/connections/{connection_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
     def elt_connections_delete(
@@ -748,98 +756,18 @@ def register_elt_routes(v1: APIRouter) -> None:
         )
         run_id = int(row["id"])
         try:
-            row = launch_sync_run_via_dagster(
+            row, summary = run_sync_inline_for_connection(
                 conn=conn,
                 run_id=run_id,
-                integration_code=integration_code,
-                stream_name="*",
-                triggered_by=principal.user.username,
-            )
-            _audit_elt(
-                conn,
-                request,
-                principal,
                 workspace_id=wid,
-                action="trigger_sync",
-                resource_type="sync_run",
-                resource_id=str(run_id),
-                payload=build_sync_audit_payload(
-                    execution_mode="dagster",
-                    connection_id=connection_id,
-                    integration_code=integration_code,
-                    dagster_run_id=row.get("dagster_run_id"),
-                ),
+                domain_connection_id=connection_id,
             )
-            return {
-                "status": "accepted",
-                "message": "Sync run accepted and launched",
-                "run_id": run_id,
-                "sync_run": row,
-                "execution_mode": "dagster",
-            }
-        except SyncRunError as dagster_exc:
+        except Exception as inline_exc:
             try:
-                row, summary = run_sync_inline_fallback(
-                    conn=conn,
-                    run_id=run_id,
-                    workspace_id=wid,
-                    domain_connection_id=connection_id,
-                    dagster_error=dagster_exc,
-                )
-            except Exception as inline_exc:
                 row = mark_sync_run_failed(conn, run_id=run_id, message=str(inline_exc))
-                _audit_elt(
-                    conn,
-                    request,
-                    principal,
-                    workspace_id=wid,
-                    action="trigger_sync",
-                    resource_type="sync_run",
-                    resource_id=str(run_id),
-                    result="failure",
-                    payload=build_sync_audit_payload(
-                        execution_mode="inline_fallback",
-                        connection_id=connection_id,
-                        integration_code=integration_code,
-                        dagster_error=str(dagster_exc),
-                        error=str(inline_exc),
-                    ),
-                )
-                raise HTTPException(
-                    status_code=502,
-                    detail={
-                        "error_code": "elt_sync_failed",
-                        "error_message": str(inline_exc),
-                        "run_id": run_id,
-                    },
-                ) from inline_exc
-
-            _audit_elt(
-                conn,
-                request,
-                principal,
-                workspace_id=wid,
-                action="trigger_sync",
-                resource_type="sync_run",
-                resource_id=str(run_id),
-                payload=build_sync_audit_payload(
-                    execution_mode="inline_fallback",
-                    connection_id=connection_id,
-                    integration_code=integration_code,
-                    dagster_error=str(dagster_exc),
-                    elt_summary=summary or {},
-                ),
-            )
-            return {
-                "status": "accepted",
-                "message": "Sync completed via inline fallback",
-                "run_id": run_id,
-                "sync_run": row,
-                "summary": summary or {},
-                "execution_mode": "inline_fallback",
-            }
-        except Exception as exc:
-            row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
+            except Exception:
+                with get_engine_cached().begin() as fail_conn:
+                    row = mark_sync_run_failed(fail_conn, run_id=run_id, message=str(inline_exc))
             _audit_elt(
                 conn,
                 request,
@@ -850,20 +778,44 @@ def register_elt_routes(v1: APIRouter) -> None:
                 resource_id=str(run_id),
                 result="failure",
                 payload=build_sync_audit_payload(
-                    execution_mode="dagster",
+                    execution_mode="inline",
                     connection_id=connection_id,
                     integration_code=integration_code,
-                    error=str(exc),
+                    error=str(inline_exc),
                 ),
             )
             raise HTTPException(
                 status_code=502,
                 detail={
-                    "error_code": "dagster_launch_failed",
-                    "error_message": str(exc),
+                    "error_code": "elt_sync_failed",
+                    "error_message": str(inline_exc),
                     "run_id": run_id,
                 },
-            ) from exc
+            ) from inline_exc
+
+        _audit_elt(
+            conn,
+            request,
+            principal,
+            workspace_id=wid,
+            action="trigger_sync",
+            resource_type="sync_run",
+            resource_id=str(run_id),
+            payload=build_sync_audit_payload(
+                execution_mode="inline",
+                connection_id=connection_id,
+                integration_code=integration_code,
+                elt_summary=summary or {},
+            ),
+        )
+        return {
+            "status": "accepted",
+            "message": "Sync completed",
+            "run_id": run_id,
+            "sync_run": row,
+            "summary": summary or {},
+            "execution_mode": "inline",
+        }
 
     @v1.post("/connections/{connection_id}/pause")
     def elt_connections_pause(

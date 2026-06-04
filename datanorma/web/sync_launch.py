@@ -67,15 +67,16 @@ def launch_sync_run_via_dagster(
     return mark_sync_run_running(conn, run_id=run_id, dagster_run_id=launch.run_id)
 
 
-def run_sync_inline_fallback(
+def run_sync_inline_for_connection(
     *,
     conn: Connection,
     run_id: int,
     workspace_id: int,
     domain_connection_id: int,
-    dagster_error: Exception,
     extra_meta: dict[str, Any] | None = None,
+    execution_mode: str = "inline",
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Синхронизация доменного connection: source.read → destination.write (без Dagster daily_refresh)."""
     mark_sync_run_started_inline(conn, run_id=run_id)
     t0 = time.monotonic()
     summary = run_connection_sync(
@@ -85,14 +86,34 @@ def run_sync_inline_fallback(
         sync_run_id=run_id,
     )
     duration_ms = max(1, int((time.monotonic() - t0) * 1000))
-    meta_patch = {
+    meta_patch: dict[str, Any] = {
         "elt_summary": summary,
         "duration_ms": duration_ms,
-        "execution_mode": "inline_fallback",
-        "dagster_error": str(dagster_error),
+        "execution_mode": execution_mode,
     }
     if extra_meta:
         meta_patch.update(extra_meta)
     row = mark_sync_run_success(conn, run_id, meta_patch=meta_patch)
     return row, summary
+
+
+def run_sync_inline_fallback(
+    *,
+    conn: Connection,
+    run_id: int,
+    workspace_id: int,
+    domain_connection_id: int,
+    dagster_error: Exception,
+    extra_meta: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    meta = dict(extra_meta or {})
+    meta["dagster_error"] = str(dagster_error)
+    return run_sync_inline_for_connection(
+        conn=conn,
+        run_id=run_id,
+        workspace_id=workspace_id,
+        domain_connection_id=domain_connection_id,
+        extra_meta=meta,
+        execution_mode="inline_fallback",
+    )
 

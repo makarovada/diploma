@@ -162,7 +162,12 @@ def test_destinations_connections_and_touch_helpers(monkeypatch: pytest.MonkeyPa
     assert repo.delete_connection_row(conn2, workspace_id=1, connection_id=11) is True
 
     conn3 = MagicMock()
-    conn3.execute.side_effect = [_Rows([{"id": 1}]), _Rows([{"id": 1}]), _Rows([{"id": 1}])]
+    conn3.execute.side_effect = [
+        _Rows([{"id": 1}]),  # ensure_sync_state: existing row
+        _Rows([]),  # ensure_sync_state: update
+        _Rows([{"id": 1}]),  # touch_source
+        _Rows([{"id": 1}]),  # touch_destination
+    ]
     repo.ensure_sync_state_for_stream(
         conn3,
         integration_code="ozon",
@@ -173,3 +178,59 @@ def test_destinations_connections_and_touch_helpers(monkeypatch: pytest.MonkeyPa
     )
     repo.touch_source_checked(conn3, workspace_id=1, source_id=1)
     repo.touch_destination_checked(conn3, workspace_id=1, destination_id=2)
+
+
+def test_update_connection_streams_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = MagicMock()
+    conn_row = {
+        **_CONN_GET_ROW,
+        "streams": [{**_STREAM_ROW, "destination_sync_mode": "append"}],
+    }
+    monkeypatch.setattr(repo, "get_connection", lambda *_a, **_k: conn_row)
+    monkeypatch.setattr(repo, "get_source", lambda *_a, **_k: {"id": 1, "connector_code": "bitrix24"})
+    monkeypatch.setattr(repo, "ensure_sync_state_for_stream", lambda *_a, **_k: None)
+    monkeypatch.setattr(repo, "save_connection_stream_rules", lambda *_a, **_k: None)
+    conn.execute.side_effect = [
+        _Rows([(21,)]),  # UPDATE connection_stream
+        _Rows([conn_row]),  # final get_connection
+    ]
+    out = repo.update_connection_streams_config(
+        conn,
+        workspace_id=1,
+        connection_id=11,
+        streams=[
+            {
+                "stream_name": "orders",
+                "sync_mode": "incremental",
+                "destination_sync_mode": "append",
+                "cursor_field": "updated_at",
+            }
+        ],
+        column_rules=[
+            {
+                "entity": "orders",
+                "source_field": "STAGE_ID",
+                "target_field": "STAGE_ID",
+                "type": "string",
+                "required": False,
+            }
+        ],
+    )
+    assert out["id"] == 11
+
+
+def test_update_connection_streams_config_unknown_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    conn = MagicMock()
+    monkeypatch.setattr(
+        repo,
+        "get_connection",
+        lambda *_a, **_k: {**_CONN_GET_ROW, "streams": [_STREAM_ROW]},
+    )
+    monkeypatch.setattr(repo, "get_source", lambda *_a, **_k: {"id": 1, "connector_code": "ozon"})
+    with pytest.raises(repo.EltRepoError, match="stream not found"):
+        repo.update_connection_streams_config(
+            conn,
+            workspace_id=1,
+            connection_id=11,
+            streams=[{"stream_name": "missing", "sync_mode": "full_refresh"}],
+        )

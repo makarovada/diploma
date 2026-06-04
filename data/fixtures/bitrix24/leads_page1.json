@@ -1,0 +1,8 @@
+{
+  "result": [
+    {"ID": "1", "TITLE": "Лид 1", "DATE_MODIFY": "2026-01-14T10:00:00+03:00", "ASSIGNED_BY_ID": "1"},
+    {"ID": "2", "TITLE": "Лид 2", "DATE_MODIFY": "2026-01-15T11:30:00+03:00", "ASSIGNED_BY_ID": "2"}
+  ],
+  "next": 50,
+  "total": 75
+}

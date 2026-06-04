@@ -13,6 +13,14 @@ import {
   validateGoogleSheetsConfig,
   type GoogleSheetsConfig,
 } from "@/components/google-sheets-source-form";
+import {
+  emptyBitrix24Config,
+  Bitrix24SourceForm,
+  bitrix24ConfigToRecord,
+  parseBitrix24Config,
+  validateBitrix24Config,
+  type Bitrix24Config,
+} from "@/components/bitrix24-source-form";
 import { hasGoogleOAuthCallback, OAUTH_WIZARD_RESTORE_KEY } from "@/lib/oauth-return";
 import { fetchV1ConnectorsCatalog, fetchWorkspaces } from "@/lib/api-datanorma";
 import { createEltSource } from "@/lib/api-elt";
@@ -29,6 +37,9 @@ type CatalogItem = {
 function connectorConfigHint(connectorCode: string | null): string {
   if (connectorCode === "google_sheet") {
     return "Google Sheets: ID таблицы и вход через Google OAuth.";
+  }
+  if (connectorCode === "bitrix24") {
+    return "Bitrix24: URL входящего webhook (CRM и задачи на чтение).";
   }
   if (connectorCode === "yandex_metrika") {
     return "Для Яндекс Метрики: oauth_token, counter_id.";
@@ -63,6 +74,7 @@ export function SourceNewPage() {
   const [pickedCode, setPickedCode] = useState<string | null>(null);
   const [configText, setConfigText] = useState("{}");
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState<GoogleSheetsConfig>(emptyGoogleSheetsConfig);
+  const [bitrix24Config, setBitrix24Config] = useState<Bitrix24Config>(emptyBitrix24Config);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -110,6 +122,9 @@ export function SourceNewPage() {
       if (String(item?.code) === "google_sheet") {
         setGoogleSheetsConfig(emptyGoogleSheetsConfig());
       }
+      if (String(item?.code) === "bitrix24") {
+        setBitrix24Config(parseBitrix24Config(tmpl));
+      }
     },
     [],
   );
@@ -118,12 +133,18 @@ export function SourceNewPage() {
     if (pickedCode === "google_sheet") {
       return googleSheetsConfigToRecord(googleSheetsConfig);
     }
+    if (pickedCode === "bitrix24") {
+      return bitrix24ConfigToRecord(bitrix24Config);
+    }
     return JSON.parse(configText || "{}") as Record<string, unknown>;
-  }, [pickedCode, googleSheetsConfig, configText]);
+  }, [pickedCode, googleSheetsConfig, bitrix24Config, configText]);
 
   const configValidationError = useMemo(() => {
     if (pickedCode === "google_sheet") {
       return validateGoogleSheetsConfig(googleSheetsConfig);
+    }
+    if (pickedCode === "bitrix24") {
+      return validateBitrix24Config(bitrix24Config);
     }
     try {
       JSON.parse(configText || "{}");
@@ -131,7 +152,7 @@ export function SourceNewPage() {
     } catch {
       return "Некорректный JSON в конфигурации";
     }
-  }, [pickedCode, googleSheetsConfig, configText]);
+  }, [pickedCode, googleSheetsConfig, bitrix24Config, configText]);
 
   const createMut = useMutation({
     mutationFn: () => {
@@ -216,6 +237,8 @@ export function SourceNewPage() {
                 );
               }}
             />
+          ) : pickedCode === "bitrix24" ? (
+            <Bitrix24SourceForm value={bitrix24Config} onChange={setBitrix24Config} idPrefix="source-new-bx24" />
           ) : (
             <>
               <label className="text-sm text-muted-foreground" htmlFor="source-config-json">

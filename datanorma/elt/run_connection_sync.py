@@ -23,6 +23,7 @@ from datanorma.sources.schema_inference import records_to_json_schema
 from datanorma.warehouse.sync_state_repo import build_ingest_state_dict, extract_stream_cursor
 from datanorma.normalization.typing import cast_row
 from datanorma.web.elt_repo import (
+    ensure_sync_state_for_stream,
     get_connection,
     get_destination,
     get_source,
@@ -70,26 +71,30 @@ def _write_normalization_issues(
 ) -> None:
     for iss in issues:
         try:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO normalization_issue
-                      (sync_run_id, connection_id, stream_name, target_field, error_code, error_text, raw_value)
-                    VALUES
-                      (:run_id, :cid, :sn, :tf, :ec, :et, CAST(:rv AS jsonb))
-                    """
-                ),
-                {
-                    "run_id": sync_run_id,
-                    "cid": connection_id,
-                    "sn": stream_name,
-                    "tf": iss.get("field"),
-                    "ec": iss.get("error_code") or "cast_error",
-                    "et": iss.get("error_text"),
-                    "rv": json.dumps(iss.get("raw_value"), ensure_ascii=False) if iss.get("raw_value") is not None else None,
-                },
-            )
+            with conn.begin_nested():
+                conn.execute(
+                    text(
+                        """
+                        INSERT INTO normalization_issue
+                          (sync_run_id, connection_id, stream_name, target_field, error_code, error_text, raw_value)
+                        VALUES
+                          (:run_id, :cid, :sn, :tf, :ec, :et, CAST(:rv AS jsonb))
+                        """
+                    ),
+                    {
+                        "run_id": sync_run_id,
+                        "cid": connection_id,
+                        "sn": stream_name,
+                        "tf": iss.get("field"),
+                        "ec": iss.get("error_code") or "cast_error",
+                        "et": iss.get("error_text"),
+                        "rv": json.dumps(iss.get("raw_value"), ensure_ascii=False)
+                        if iss.get("raw_value") is not None
+                        else None,
+                    },
+                )
         except Exception:
+            _log.debug("normalization_issue insert skipped for %s/%s", stream_name, iss.get("field"), exc_info=True)
             continue
 
 
@@ -157,6 +162,23 @@ def run_connection_sync(
             {"csid": csid, "wid": workspace_id},
         ).mappings().first()
         if ss_row is None:
+            ss_row = conn.execute(
+                text(
+                    "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state "
+                    "FROM sync_state WHERE connection_stream_id = :csid"
+                ),
+                {"csid": csid},
+            ).mappings().first()
+        if ss_row is None:
+            ensure_sync_state_for_stream(
+                conn,
+                integration_code=cc_src,
+                stream_name=sn,
+                sync_mode=sync_mode,
+                cursor_field=cursor_field,
+                connection_stream_id=csid,
+                workspace_id=workspace_id,
+            )
             ss_row = conn.execute(
                 text(
                     "SELECT id, integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state "

@@ -11,6 +11,7 @@ import {
   fetchV1Sync,
   fetchV1SyncIssues,
   fetchV1SyncLogs,
+  mapNormRowToIssue,
   mapV1SyncToRun,
   retryV1Sync,
   syncRunLogItemsToLines,
@@ -41,10 +42,10 @@ export function RunDetailPage() {
     enabled: Number.isFinite(runId) && runId > 0,
   });
   const issuesQuery = useQuery({
-    queryKey: queryKeys.issues.list(200),
+    queryKey: queryKeys.issues.byRun(runId, 200),
     queryFn: async () => {
       const { items } = await fetchV1SyncIssues(runId, 200);
-      return items;
+      return items.map(mapNormRowToIssue);
     },
     enabled: Number.isFinite(runId) && runId > 0,
   });
@@ -146,10 +147,39 @@ export function RunDetailPage() {
         </Card>
       ) : null}
       <Card className="p-4" data-testid="run-issues-summary">
-        <p className="font-medium">Issues для этого запуска</p>
+        <p className="font-medium">Проблемы нормализации</p>
         <p className="mt-1 text-sm text-muted-foreground">Найдено: {runIssues.length}</p>
-        <LinkAsButton href="/issues" variant="outline" className="mt-2">
-          Открыть список issues
+        {issuesQuery.isError ? (
+          <p className="mt-2 text-sm text-destructive">Не удалось загрузить список проблем.</p>
+        ) : null}
+        {runIssues.length > 0 ? (
+          <div className="mt-3 overflow-auto rounded-md border" data-testid="table-run-issues">
+            <table className="w-full min-w-[720px] text-sm">
+              <thead className="bg-muted">
+                <tr>
+                  <th className="p-2 text-left">Поле</th>
+                  <th className="p-2 text-left">Тип</th>
+                  <th className="p-2 text-left">Сообщение</th>
+                  <th className="p-2 text-left">Поток</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runIssues.map((issue) => (
+                  <tr key={issue.id} className="border-t" data-testid={`row-run-issue-${issue.id}`}>
+                    <td className="p-2 font-mono text-xs">{issue.field}</td>
+                    <td className="p-2">{issue.type}</td>
+                    <td className="p-2 text-muted-foreground">{issue.original}</td>
+                    <td className="p-2">{issue.stream}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="mt-2 text-sm text-muted-foreground">Нет проблем для отображения.</p>
+        )}
+        <LinkAsButton href="/issues" variant="outline" className="mt-3" data-testid="button-run-to-issues">
+          Все проблемные записи
         </LinkAsButton>
       </Card>
       <LogViewer logs={logs} />

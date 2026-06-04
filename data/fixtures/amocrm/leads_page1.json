@@ -1,0 +1,30 @@
+{
+  "_page": 1,
+  "_links": {
+    "self": {"href": "https://test.amocrm.ru/api/v4/leads?page=1&limit=2"},
+    "next": {"href": "https://test.amocrm.ru/api/v4/leads?page=2&limit=2"}
+  },
+  "_embedded": {
+    "leads": [
+      {
+        "id": 1,
+        "name": "Сделка 1",
+        "price": 10000,
+        "updated_at": 1736848800,
+        "_links": {"self": {"href": "https://test.amocrm.ru/api/v4/leads/1"}},
+        "_embedded": {
+          "tags": [{"id": 11, "name": "vip"}, {"id": 12, "name": "повтор"}],
+          "contacts": [{"id": 101}, {"id": 102}]
+        }
+      },
+      {
+        "id": 2,
+        "name": "Сделка 2",
+        "price": 25000,
+        "updated_at": 1736935200,
+        "_links": {"self": {"href": "https://test.amocrm.ru/api/v4/leads/2"}},
+        "_embedded": {"tags": [], "contacts": []}
+      }
+    ]
+  }
+}

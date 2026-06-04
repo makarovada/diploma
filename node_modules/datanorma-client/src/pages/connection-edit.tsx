@@ -130,8 +130,8 @@ export function ConnectionEditPage() {
             <LinkAsButton href={`/connections/${id}/streams`} variant="outline" data-testid="link-connection-edit-streams">
               Потоки
             </LinkAsButton>
-            <LinkAsButton href={`/connections/${id}/mapping`} variant="outline" data-testid="link-connection-edit-mapping">
-              Маппинг
+            <LinkAsButton href={`/connections/${id}/streams/edit`} variant="outline" data-testid="link-connection-edit-mapping">
+              Потоки и маппинг
             </LinkAsButton>
           </div>
         </Card>

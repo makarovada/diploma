@@ -1,0 +1,18 @@
+{
+  "_page": 1,
+  "_links": {"self": {"href": "https://test.amocrm.ru/api/v4/contacts?page=1"}},
+  "_embedded": {
+    "contacts": [
+      {
+        "id": 101,
+        "name": "Иван Петров",
+        "updated_at": 1736848800,
+        "_links": {"self": {"href": "https://test.amocrm.ru/api/v4/contacts/101"}},
+        "custom_fields_values": [
+          {"field_id": 1, "field_code": "PHONE", "values": [{"value": "+79991234567", "enum_code": "WORK"}]},
+          {"field_id": 2, "field_code": "EMAIL", "values": [{"value": "ivan@example.com"}]}
+        ]
+      }
+    ]
+  }
+}

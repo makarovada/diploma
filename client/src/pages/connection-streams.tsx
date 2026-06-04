@@ -39,7 +39,16 @@ export function ConnectionStreamsPage() {
 
   return (
     <div className="space-y-4 p-4">
-      <PageHeader title="Потоки данных" description={connection.name} breadcrumbs="Интеграции / Подключения / Потоки" />
+      <PageHeader
+        title="Потоки данных"
+        description={connection.name}
+        breadcrumbs="Интеграции / Подключения / Потоки"
+        actions={
+          <LinkAsButton href={`/connections/${id}/streams/edit`} data-testid="link-edit-connection-streams">
+            Редактировать потоки
+          </LinkAsButton>
+        }
+      />
       <ConnectionSubNav connectionId={id} />
       <Card className="overflow-auto p-0" data-testid="table-connection-streams">
         <table className="w-full min-w-[900px] text-left text-sm" aria-label="Потоки">

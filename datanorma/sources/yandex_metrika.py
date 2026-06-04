@@ -113,23 +113,37 @@ class YandexMetrikaSource(BaseSource):
         if not token or not cid:
             raise ValueError("Yandex Metrika: нужны oauth_token и counter_id.")
         date1, date2 = self._date_range()
-        params: dict[str, Any] = {
-            "ids": cid,
-            "date1": date1,
-            "date2": date2,
-            "dimensions": dimensions,
-            "metrics": metrics,
-            "accuracy": "full",
-            "limit": 10000,
-        }
-        if preset:
-            params["preset"] = preset
-        status, body = request_json("GET", STAT_V1_DATA, headers={"Authorization": f"OAuth {token}"}, params=params)
-        if status >= 400:
-            raise RuntimeError(f"Yandex Metrika stat/v1/data HTTP {status}: {body!r}")
-        if not isinstance(body, dict):
-            return []
-        return _parse_report_rows(body)
+        headers = {"Authorization": f"OAuth {token}"}
+        limit = 10000
+        offset = 1  # Metrika использует 1-based offset
+        rows_out: list[dict[str, Any]] = []
+        while True:
+            params: dict[str, Any] = {
+                "ids": cid,
+                "date1": date1,
+                "date2": date2,
+                "dimensions": dimensions,
+                "metrics": metrics,
+                "accuracy": "full",
+                "limit": limit,
+                "offset": offset,
+            }
+            if preset:
+                params["preset"] = preset
+            status, body = request_json("GET", STAT_V1_DATA, headers=headers, params=params)
+            if status >= 400:
+                raise RuntimeError(f"Yandex Metrika stat/v1/data HTTP {status}: {body!r}")
+            if not isinstance(body, dict):
+                break
+            page = _parse_report_rows(body)
+            rows_out.extend(page)
+            total_rows = body.get("total_rows")
+            total = int(total_rows) if isinstance(total_rows, (int, float)) else len(rows_out)
+            if not page or len(rows_out) >= total:
+                break
+            offset += limit
+            _log.debug("Yandex Metrika: пагинация offset=%s, собрано %s из %s", offset, len(rows_out), total)
+        return rows_out
 
     def _stream_report_spec(self, stream_name: str) -> tuple[str, str]:
         if stream_name == "summary":
@@ -230,6 +244,7 @@ class YandexMetrikaSource(BaseSource):
             )
         url = f"{METRIKA_MANAGEMENT_BASE}/counter/{counter_id.strip()}"
         headers = {"Authorization": f"OAuth {token.strip()}"}
+        date1, date2 = self._date_range()
         try:
             with httpx.Client(timeout=30.0) as client:
                 r = client.get(url, headers=headers)
@@ -237,7 +252,12 @@ class YandexMetrikaSource(BaseSource):
             return SourceCheckResult(
                 ok=ok,
                 message=f"Management API счётчика: HTTP {r.status_code}.",
-                details={"mode": "yandex_metrika_api", "counter_id": counter_id.strip(), "status": r.status_code},
+                details={
+                    "mode": "yandex_metrika_api",
+                    "counter_id": counter_id.strip(),
+                    "status": r.status_code,
+                    "date_range": {"date1": date1, "date2": date2},
+                },
             )
         except Exception as exc:
             return SourceCheckResult(

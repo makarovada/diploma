@@ -13,6 +13,13 @@ import {
   validateGoogleSheetsConfig,
   type GoogleSheetsConfig,
 } from "@/components/google-sheets-source-form";
+import {
+  Bitrix24SourceForm,
+  parseBitrix24Config,
+  bitrix24ConfigToRecord,
+  validateBitrix24Config,
+  type Bitrix24Config,
+} from "@/components/bitrix24-source-form";
 import { ConfirmDeleteButton } from "@/components/confirm-delete-button";
 import { fetchEltSource, patchEltSource, deleteEltSource } from "@/lib/api-elt";
 import { fetchWorkspaces } from "@/lib/api-datanorma";
@@ -29,6 +36,7 @@ export function SourceEditPage() {
   const [name, setName] = useState("");
   const [configText, setConfigText] = useState("{}");
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState<GoogleSheetsConfig | null>(null);
+  const [bitrix24Config, setBitrix24Config] = useState<Bitrix24Config | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -54,9 +62,14 @@ export function SourceEditPage() {
     setName(s.name);
     if (s.connector_code === "google_sheet") {
       setGoogleSheetsConfig(parseGoogleSheetsConfig(s.config ?? {}));
+      setBitrix24Config(null);
+    } else if (s.connector_code === "bitrix24") {
+      setBitrix24Config(parseBitrix24Config(s.config ?? {}));
+      setGoogleSheetsConfig(null);
     } else {
       setConfigText(JSON.stringify(s.config ?? {}, null, 2));
       setGoogleSheetsConfig(null);
+      setBitrix24Config(null);
     }
   }, [query.data]);
 
@@ -66,12 +79,18 @@ export function SourceEditPage() {
     if (connectorCode === "google_sheet" && googleSheetsConfig) {
       return googleSheetsConfigToRecord(googleSheetsConfig);
     }
+    if (connectorCode === "bitrix24" && bitrix24Config) {
+      return bitrix24ConfigToRecord(bitrix24Config);
+    }
     return JSON.parse(configText || "{}") as Record<string, unknown>;
-  }, [connectorCode, googleSheetsConfig, configText]);
+  }, [connectorCode, googleSheetsConfig, bitrix24Config, configText]);
 
   const configValidationError = useMemo(() => {
     if (connectorCode === "google_sheet" && googleSheetsConfig) {
       return validateGoogleSheetsConfig(googleSheetsConfig);
+    }
+    if (connectorCode === "bitrix24" && bitrix24Config) {
+      return validateBitrix24Config(bitrix24Config);
     }
     try {
       JSON.parse(configText || "{}");
@@ -79,7 +98,7 @@ export function SourceEditPage() {
     } catch {
       return "Некорректный JSON в конфигурации";
     }
-  }, [connectorCode, googleSheetsConfig, configText]);
+  }, [connectorCode, googleSheetsConfig, bitrix24Config, configText]);
 
   const saveMut = useMutation({
     mutationFn: () => {
@@ -159,6 +178,8 @@ export function SourceEditPage() {
             onChange={setGoogleSheetsConfig}
             idPrefix="source-edit"
           />
+        ) : connectorCode === "bitrix24" && bitrix24Config ? (
+          <Bitrix24SourceForm value={bitrix24Config} onChange={setBitrix24Config} idPrefix="source-edit-bx24" />
         ) : (
           <>
             <label className="text-sm text-muted-foreground" htmlFor="source-edit-config-json">

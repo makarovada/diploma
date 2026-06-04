@@ -1,0 +1,12 @@
+{
+  "query": {
+    "ids": [12345678],
+    "dimensions": [{"name": "ym:s:date"}],
+    "metrics": [{"name": "ym:s:pageviews"}]
+  },
+  "total_rows": 2,
+  "data": [
+    {"dimensions": [{"name": "2026-01-15"}], "metrics": [612]},
+    {"dimensions": [{"name": "2026-01-16"}], "metrics": [470]}
+  ]
+}

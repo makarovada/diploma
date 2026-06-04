@@ -21,6 +21,7 @@ export const queryKeys = {
   },
   issues: {
     list: (limit: number) => ["issues", "normalization", limit] as const,
+    byRun: (runId: number, limit: number) => ["issues", "by-run", runId, limit] as const,
     detail: (issueId: string) => ["issues", "detail", issueId] as const,
   },
   sources: {

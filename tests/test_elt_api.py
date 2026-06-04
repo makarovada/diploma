@@ -113,17 +113,17 @@ def test_elt_connection_trigger_domain(monkeypatch) -> None:
     monkeypatch.setattr(elt_mod, "create_sync_run", lambda *_a, **_k: {"id": 88, "status": "queued"})
     monkeypatch.setattr(
         elt_mod,
-        "launch_sync_run_via_dagster",
-        lambda *_a, **_k: {"id": 88, "status": "running", "dagster_run_id": "dagster-88"},
+        "run_sync_inline_for_connection",
+        lambda *_a, **_k: ({"id": 88, "status": "success", "dagster_run_id": "elt_inline"}, {"total_rows_written": 1, "streams": []}),
     )
     with TestClient(app) as client2:
         r = client2.post("/api/v1/connections/5/trigger", headers={"X-Workspace-Id": "1"})
         assert r.status_code == 202
         assert r.json()["run_id"] == 88
-        assert r.json()["execution_mode"] == "dagster"
+        assert r.json()["execution_mode"] == "inline"
 
 
-def test_elt_connection_trigger_fallback_inline(monkeypatch) -> None:
+def test_elt_connection_trigger_failure(monkeypatch) -> None:
     monkeypatch.setattr(elt_mod, "record_audit_event", lambda *_a, **_k: None)
     conn = MagicMock()
     conn.execute.return_value.mappings.return_value.first.return_value = {"id": 5, "source_id": 10}
@@ -137,10 +137,8 @@ def test_elt_connection_trigger_fallback_inline(monkeypatch) -> None:
     app.dependency_overrides[get_conn] = _yield_conn
     monkeypatch.setattr(elt_mod, "get_source", lambda *_a, **_k: {"id": 10, "connector_code": "ozon", "config_encrypted": "{}"})
     monkeypatch.setattr(elt_mod, "create_sync_run", lambda *_a, **_k: {"id": 99, "status": "queued"})
-    monkeypatch.setattr(elt_mod, "launch_sync_run_via_dagster", lambda *_a, **_k: (_ for _ in ()).throw(elt_mod.SyncRunError("dagster down")))
-    monkeypatch.setattr(elt_mod, "run_sync_inline_fallback", lambda *_a, **_k: ({"id": 99, "status": "success"}, {"total_rows_written": 3, "streams": []}))
+    monkeypatch.setattr(elt_mod, "run_sync_inline_for_connection", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("sync failed")))
     with TestClient(app) as client2:
         r = client2.post("/api/v1/connections/5/trigger", headers={"X-Workspace-Id": "1"})
-        assert r.status_code == 202
-        assert r.json()["run_id"] == 99
-        assert r.json()["execution_mode"] == "inline_fallback"
+        assert r.status_code == 502
+        assert r.json()["detail"]["error_code"] == "elt_sync_failed"

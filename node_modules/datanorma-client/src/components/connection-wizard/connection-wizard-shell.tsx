@@ -47,6 +47,10 @@ import {
 } from "@/lib/destination-sync-mode";
 import { queryKeys } from "@/lib/query-keys";
 import {
+  normalizeSourceConfigForConnector,
+  normalizeSourceConfigTextForConnector,
+} from "@/lib/source-config-normalize";
+import {
   currentSpaReturnPath,
   hasGoogleOAuthCallback,
   OAUTH_WIZARD_RESTORE_KEY,
@@ -281,9 +285,13 @@ export function ConnectionWizardShell() {
     fetchEltSource(form.sourceId, form.workspaceCode)
       .then(({ item }) => {
         if (!cancelled) {
+          const configText = normalizeSourceConfigTextForConnector(
+            item.connector_code,
+            JSON.stringify(item.config ?? {}, null, 2),
+          );
           setForm((f) => ({
             ...f,
-            credentialsConfigText: JSON.stringify(item.config ?? {}, null, 2),
+            credentialsConfigText: configText,
           }));
         }
       })
@@ -401,7 +409,9 @@ export function ConnectionWizardShell() {
 
   const patchCfgMutation = useMutation({
     mutationFn: async (p: { sourceId: number; workspaceCode: string; configText: string }) => {
-      const cfg = JSON.parse(p.configText || "{}") as Record<string, unknown>;
+      const parsed = JSON.parse(p.configText || "{}") as Record<string, unknown>;
+      const source = sources.find((x) => x.id === p.sourceId);
+      const cfg = normalizeSourceConfigForConnector(source?.connector_code ?? null, parsed);
       return patchEltSource(p.sourceId, {
         workspace_code: p.workspaceCode,
         config: cfg,

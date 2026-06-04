@@ -45,7 +45,7 @@ from datanorma.web.deps import WorkspacePrincipal, get_workspace_principal
 from datanorma.web.permission_service import effective_permissions_for_user
 from datanorma.web.api_workspaces import register_workspace_routes
 from datanorma.web.api_resource_grants import register_resource_grant_routes
-from datanorma.web.sync_launch import build_sync_audit_payload, launch_sync_run_via_dagster
+from datanorma.web.sync_launch import build_sync_audit_payload, launch_sync_run_via_dagster, run_sync_inline_for_connection
 from datanorma.web.sync_runs import (
     SyncRunError,
     attach_load_destination,
@@ -56,7 +56,7 @@ from datanorma.web.sync_runs import (
     refresh_sync_run_status,
     resolve_connection,
 )
-from datanorma.web.sql_util import typed_table_sql, warehouse_row_count, warehouse_table_sql
+from datanorma.web.norm_issues import list_norm_issues_for_run, list_norm_issues_for_workspace
 from datanorma.web.api_v1_catalog import register_api_v1_catalog_routes
 from datanorma.web.api_elt import get_elt_workspace_id, register_elt_routes
 from datanorma.web.elt_repo import list_destinations, public_destination_payload
@@ -647,15 +647,8 @@ def data_norm_issues(
     limit: int = 50,
 ) -> dict[str, Any]:
     lim = max(1, min(limit, 200))
-    rows = conn.execute(
-        text(
-            "SELECT id, batch_id, source_system, source_record_id, field_name, issue_type, message, "
-            "COALESCE(status, 'open') AS status, resolved_at, resolution_note, resolved_by, created_at "
-            "FROM normalization_issue WHERE workspace_id = :wid ORDER BY id DESC LIMIT :lim"
-        ),
-        {"lim": lim, "wid": workspace_id},
-    ).mappings().all()
-    return {"rows": [dict(r) for r in rows]}
+    rows = list_norm_issues_for_workspace(conn, workspace_id=workspace_id, limit=lim)
+    return {"rows": rows}
 
 
 @router.get("/data/normalization-fix-stats")
@@ -1205,6 +1198,65 @@ def v1_sync_trigger(
         workspace_id=workspace_id,
     )
     run_id = int(row["id"])
+    if domain_cid is not None:
+        try:
+            row, summary = run_sync_inline_for_connection(
+                conn=conn,
+                run_id=run_id,
+                workspace_id=workspace_id,
+                domain_connection_id=int(domain_cid),
+            )
+        except Exception as exc:
+            row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
+            _audit_api(
+                conn,
+                request,
+                user,
+                workspace_id=workspace_id,
+                action="trigger_sync",
+                resource_type="sync_run",
+                resource_id=str(run_id),
+                result="failure",
+                payload=build_sync_audit_payload(
+                    execution_mode="inline",
+                    integration_code=integration_code,
+                    stream_name=stream_name,
+                    domain_connection_id=domain_cid,
+                    error=str(exc),
+                ),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error_code": "elt_sync_failed",
+                    "error_message": str(exc),
+                    "run_id": run_id,
+                },
+            ) from exc
+        _audit_api(
+            conn,
+            request,
+            user,
+            workspace_id=workspace_id,
+            action="trigger_sync",
+            resource_type="sync_run",
+            resource_id=str(run_id),
+            payload=build_sync_audit_payload(
+                execution_mode="inline",
+                integration_code=integration_code,
+                stream_name=stream_name,
+                domain_connection_id=domain_cid,
+                elt_summary=summary or {},
+            ),
+        )
+        return {
+            "status": "accepted",
+            "message": "Sync completed",
+            "run_id": run_id,
+            "sync_run": row,
+            "summary": summary or {},
+            "execution_mode": "inline",
+        }
     try:
         row = launch_sync_run_via_dagster(
             conn=conn,
@@ -1361,17 +1413,8 @@ def v1_sync_issues(
     if run is None:
         raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
     lim = max(1, min(limit, 500))
-    rows = conn.execute(
-        text(
-            "SELECT id, batch_id, source_system, source_record_id, field_name, issue_type, message, "
-            "COALESCE(status, 'open') AS status, resolved_at, resolution_note, resolved_by, created_at "
-            "FROM normalization_issue "
-            "WHERE workspace_id = :wid AND (:src IS NULL OR source_system = :src) "
-            "ORDER BY created_at DESC, id DESC LIMIT :lim"
-        ),
-        {"wid": workspace_id, "src": run.get("integration_code"), "lim": lim},
-    ).mappings().all()
-    return {"items": [dict(r) for r in rows]}
+    items = list_norm_issues_for_run(conn, sync_run_id=run_id, limit=lim)
+    return {"items": items}
 
 
 @v1.post("/syncs/{run_id}/retry", status_code=status.HTTP_202_ACCEPTED)
@@ -1396,6 +1439,63 @@ def v1_sync_retry(
         workspace_id=workspace_id,
     )
     new_id = int(row["id"])
+    domain_cid = old.get("domain_connection_id")
+    if domain_cid is not None:
+        try:
+            row, summary = run_sync_inline_for_connection(
+                conn=conn,
+                run_id=new_id,
+                workspace_id=workspace_id,
+                domain_connection_id=int(domain_cid),
+                extra_meta={"retry_of": run_id},
+            )
+        except Exception as exc:
+            row = mark_sync_run_failed(conn, run_id=new_id, message=str(exc))
+            _audit_api(
+                conn,
+                request,
+                user,
+                workspace_id=workspace_id,
+                action="trigger_sync_retry",
+                resource_type="sync_run",
+                resource_id=str(new_id),
+                result="failure",
+                payload=build_sync_audit_payload(
+                    execution_mode="inline",
+                    retry_of=run_id,
+                    error=str(exc),
+                ),
+            )
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error_code": "elt_sync_failed",
+                    "error_message": str(exc),
+                    "run_id": new_id,
+                },
+            ) from exc
+        _audit_api(
+            conn,
+            request,
+            user,
+            workspace_id=workspace_id,
+            action="trigger_sync_retry",
+            resource_type="sync_run",
+            resource_id=str(new_id),
+            payload=build_sync_audit_payload(
+                execution_mode="inline",
+                retry_of=run_id,
+                elt_summary=summary or {},
+            ),
+        )
+        return {
+            "status": "accepted",
+            "message": "Sync completed",
+            "run_id": new_id,
+            "sync_run": row,
+            "summary": summary or {},
+            "execution_mode": "inline",
+        }
     try:
         row = launch_sync_run_via_dagster(
             conn=conn,
@@ -1457,9 +1557,10 @@ def v1_issue_resolve(
 ) -> dict[str, Any]:
     row = conn.execute(
         text(
-            "UPDATE normalization_issue SET status = 'resolved', resolved_at = NOW(), "
-            "resolved_by = :rb, resolution_note = :note WHERE id = :id AND workspace_id = :wid "
-            "RETURNING id, COALESCE(status, 'open') AS status, resolved_at, resolved_by, resolution_note"
+            "UPDATE normalization_issue ni SET status = 'resolved', resolved_at = NOW(), "
+            "resolved_by = :rb, resolution_note = :note "
+            "FROM sync_run sr WHERE ni.id = :id AND ni.sync_run_id = sr.id AND sr.workspace_id = :wid "
+            "RETURNING ni.id, COALESCE(ni.status, 'open') AS status, ni.resolved_at, ni.resolved_by, ni.resolution_note"
         ),
         {"id": issue_id, "wid": workspace_id, "rb": principal.user.username, "note": (body.note or "").strip() or None},
     ).mappings().first()
@@ -1489,9 +1590,10 @@ def v1_issue_ignore(
 ) -> dict[str, Any]:
     row = conn.execute(
         text(
-            "UPDATE normalization_issue SET status = 'ignored', resolved_at = NOW(), "
-            "resolved_by = :rb, resolution_note = :note WHERE id = :id AND workspace_id = :wid "
-            "RETURNING id, COALESCE(status, 'open') AS status, resolved_at, resolved_by, resolution_note"
+            "UPDATE normalization_issue ni SET status = 'ignored', resolved_at = NOW(), "
+            "resolved_by = :rb, resolution_note = :note "
+            "FROM sync_run sr WHERE ni.id = :id AND ni.sync_run_id = sr.id AND sr.workspace_id = :wid "
+            "RETURNING ni.id, COALESCE(ni.status, 'open') AS status, ni.resolved_at, ni.resolved_by, ni.resolution_note"
         ),
         {"id": issue_id, "wid": workspace_id, "rb": principal.user.username, "note": (body.note or "").strip() or None},
     ).mappings().first()

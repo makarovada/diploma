@@ -2,14 +2,23 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import create_source
+from datanorma.sources.yandex_metrika import _parse_report_rows, _sanitize_key
 
 pytestmark = pytest.mark.unit
+
+_FIXTURES = Path(__file__).resolve().parent.parent / "data" / "fixtures" / "yandex_metrika"
+
+
+def _load_fixture(name: str) -> dict:
+    return json.loads((_FIXTURES / name).read_text(encoding="utf-8"))
 
 
 def _stat_body() -> dict:
@@ -99,3 +108,62 @@ def test_read_summary_mock(tmp_path) -> None:
         )
         rows = list(src.read("summary"))
         assert rows and "date" in rows[0]
+
+
+def test_check_fail_403(tmp_path) -> None:
+    paths = DataPathsResource(repo_root=str(tmp_path))
+    resp = MagicMock()
+    resp.status_code = 403
+    with patch("datanorma.sources.yandex_metrika.httpx.Client") as cli:
+        cli.return_value.__enter__.return_value.get.return_value = resp
+        src = create_source(
+            "yandex_metrika",
+            paths=paths,
+            source_config={"oauth_token": "t", "counter_id": "1"},
+        )
+        res = src.check()
+    assert res.ok is False
+    assert res.details and "date_range" in res.details
+
+
+def test_read_summary_incremental(tmp_path) -> None:
+    paths = DataPathsResource(repo_root=str(tmp_path))
+    body = _load_fixture("stat_v1_data_summary.json")
+    with patch("datanorma.sources.yandex_metrika.request_json", return_value=(200, body)):
+        src = create_source(
+            "yandex_metrika",
+            paths=paths,
+            source_config={"oauth_token": "t", "counter_id": "1"},
+        )
+        rows = list(src.read("summary", sync_mode="incremental", last_cursor="2026-01-15"))
+    dates = {r["date"] for r in rows}
+    assert dates == {"2026-01-16"}
+
+
+def test_read_unknown_stream_raises(tmp_path) -> None:
+    paths = DataPathsResource(repo_root=str(tmp_path))
+    src = create_source(
+        "yandex_metrika",
+        paths=paths,
+        source_config={"oauth_token": "t", "counter_id": "1"},
+    )
+    with pytest.raises(ValueError):
+        list(src.read("does_not_exist"))
+
+
+def test_parse_report_rows_empty() -> None:
+    assert _parse_report_rows({"query": {}, "data": []}) == []
+    assert _parse_report_rows({}) == []
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("ym:s:date", "ym_s_date"),
+        ("ym:s:bounceRate", "ym_s_bouncerate"),
+        ("ym:s:newUsers", "ym_s_newusers"),
+        (":::", "dim"),
+    ],
+)
+def test_sanitize_key(raw: str, expected: str) -> None:
+    assert _sanitize_key(raw) == expected

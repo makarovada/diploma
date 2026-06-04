@@ -25,8 +25,38 @@ _ENTITY_PATHS: dict[str, str] = {
     "customerorder": "/entity/customerorder",
     "product": "/entity/product",
     "counterparty": "/entity/counterparty",
+    "invoiceout": "/entity/invoiceout",
 }
+# stock — отчёт без поля updated, поэтому только full_refresh.
+_STOCK_STREAM = "stock"
+_STOCK_PATH = "/report/stock/all"
 _CURSOR_FIELD_RAW = "updated"
+
+
+def _flatten_moysklad_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Уплощает запись МойСклад: meta.href→href, вложенные agent/organization/store→*_name/*_href."""
+    out = dict(row)
+    meta = out.pop("meta", None)
+    if isinstance(meta, dict) and meta.get("href"):
+        out["href"] = meta.get("href")
+    for key in ("agent", "organization", "store"):
+        val = out.get(key)
+        if isinstance(val, dict):
+            name = val.get("name")
+            nested_meta = val.get("meta") if isinstance(val.get("meta"), dict) else {}
+            href = nested_meta.get("href")
+            if name is not None:
+                out[f"{key}_name"] = name
+            if href:
+                out[f"{key}_href"] = href
+            out.pop(key, None)
+    positions = out.get("positions")
+    if isinstance(positions, dict):
+        pmeta = positions.get("meta") if isinstance(positions.get("meta"), dict) else {}
+        if pmeta.get("href"):
+            out["positions_href"] = pmeta.get("href")
+        out.pop("positions", None)
+    return out
 
 
 class MoysKladSource(BaseSource):
@@ -62,17 +92,24 @@ class MoysKladSource(BaseSource):
                 return None
         return None
 
-    def _fetch_entities(self, stream_name: str, updated_gt_ms: int | None) -> list[dict[str, Any]]:
+    def _path_for(self, stream_name: str) -> str:
+        if stream_name == _STOCK_STREAM:
+            return _STOCK_PATH
         path = _ENTITY_PATHS.get(stream_name)
         if not path:
             raise ValueError(f"МойСклад: неизвестный stream {stream_name!r}")
-        url = MOYSKLAD_BASE + path
+        return path
+
+    def _fetch_entities(self, stream_name: str, updated_gt_ms: int | None) -> list[dict[str, Any]]:
+        url = MOYSKLAD_BASE + self._path_for(stream_name)
+        is_stock = stream_name == _STOCK_STREAM
         rows: list[dict[str, Any]] = []
         offset = 0
         limit = 500
         while True:
             params: dict[str, Any] = {"limit": limit, "offset": offset}
-            if updated_gt_ms is not None:
+            # report/stock/all не поддерживает filter=updated>… — всегда full_refresh.
+            if updated_gt_ms is not None and not is_stock:
                 params["filter"] = f"updated>{updated_gt_ms}"
             status, body = request_json("GET", url, headers=self._headers(), params=params)
             if status >= 400:
@@ -82,32 +119,32 @@ class MoysKladSource(BaseSource):
             chunk = body.get("rows") if isinstance(body.get("rows"), list) else []
             for x in chunk:
                 if isinstance(x, dict):
-                    rows.append(x)
+                    rows.append(_flatten_moysklad_row(x))
             meta = body.get("meta") if isinstance(body.get("meta"), dict) else {}
             size = int(meta.get("size") or len(chunk) or 0)
             if size < limit:
                 break
             offset += limit
+            _log.debug("МойСклад %s: пагинация offset=%s", stream_name, offset)
             if offset > 500000:
                 _log.warning("МойСклад: прерывание после offset %s", offset)
                 break
         return rows
 
     def _fetch_sample(self, stream_name: str, n: int = 50) -> list[dict[str, Any]]:
-        path = _ENTITY_PATHS.get(stream_name)
-        if not path:
-            raise ValueError(f"МойСклад: неизвестный stream {stream_name!r}")
-        url = MOYSKLAD_BASE + path
-        since = datetime.now(timezone.utc) - timedelta(days=min(self._lookback_days(), 365))
-        ms = int(since.timestamp() * 1000)
-        params = {"limit": n, "offset": 0, "filter": f"updated>{ms}"}
+        url = MOYSKLAD_BASE + self._path_for(stream_name)
+        params: dict[str, Any] = {"limit": n, "offset": 0}
+        if stream_name != _STOCK_STREAM:
+            since = datetime.now(timezone.utc) - timedelta(days=min(self._lookback_days(), 365))
+            ms = int(since.timestamp() * 1000)
+            params["filter"] = f"updated>{ms}"
         status, body = request_json("GET", url, headers=self._headers(), params=params)
         if status >= 400:
             raise RuntimeError(f"МойСклад HTTP {status}: {body!r}")
         if not isinstance(body, dict):
             return []
         chunk = body.get("rows") if isinstance(body.get("rows"), list) else []
-        return [dict(x) for x in chunk if isinstance(x, dict)][:n]
+        return [_flatten_moysklad_row(x) for x in chunk if isinstance(x, dict)][:n]
 
     def check(self) -> SourceCheckResult:
         token = self._token()
@@ -138,6 +175,18 @@ class MoysKladSource(BaseSource):
                     source_defined_cursor=True,
                 )
             )
+        # stock: отчёт без updated → только full_refresh, без cursor.
+        stock_rows = self._fetch_sample(_STOCK_STREAM, n=80)
+        stock_schema = records_to_json_schema(stock_rows) if stock_rows else {"type": "object", "properties": {}}
+        streams_out.append(
+            self.ingest_stream(
+                _STOCK_STREAM,
+                stock_schema,
+                sync_modes=(SyncMode.full_refresh,),
+                default_cursor_field=None,
+                source_defined_cursor=False,
+            )
+        )
         return IngestCatalog(streams=streams_out)
 
     def read(
@@ -148,10 +197,15 @@ class MoysKladSource(BaseSource):
         cursor_field: str | None = None,
         last_cursor: str | None = None,
     ) -> Iterator[dict[str, Any]]:
-        if stream_name not in _ENTITY_PATHS:
+        if stream_name != _STOCK_STREAM and stream_name not in _ENTITY_PATHS:
             raise ValueError(f"МойСклад: неизвестный stream {stream_name!r}")
         if not self._token():
             raise ValueError("МойСклад: нужен token.")
+
+        if stream_name == _STOCK_STREAM:
+            # report/stock/all: всегда полная выгрузка, без курсора.
+            yield from self._fetch_entities(_STOCK_STREAM, None)
+            return
 
         updated_gt_ms: int | None = None
         if sync_mode == "incremental" and last_cursor and last_cursor.strip().isdigit():

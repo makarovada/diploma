@@ -396,6 +396,7 @@ def create_connection_row(
             sync_mode=sm,
             cursor_field=cf,
             connection_stream_id=csid,
+            workspace_id=workspace_id,
         )
 
     if column_rules:
@@ -425,6 +426,173 @@ def create_connection_row(
     return get_connection(conn, workspace_id=workspace_id, connection_id=cid) or {"id": cid}
 
 
+def _primary_key_list_from_storage(pk_raw: Any) -> list[str]:
+    if pk_raw is None:
+        return []
+    if isinstance(pk_raw, list):
+        return [str(x).strip() for x in pk_raw if str(x).strip()]
+    if isinstance(pk_raw, str):
+        text = pk_raw.strip()
+        if not text:
+            return []
+        if text.startswith("["):
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, list):
+                    return [str(x).strip() for x in parsed if str(x).strip()]
+            except json.JSONDecodeError:
+                pass
+        if "," in text:
+            return [p.strip() for p in text.split(",") if p.strip()]
+        return [text]
+    return []
+
+
+def update_connection_streams_config(
+    conn: Connection,
+    *,
+    workspace_id: int,
+    connection_id: int,
+    streams: list[dict[str, Any]] | None = None,
+    column_rules: list[dict[str, Any]] | None = None,
+    wizard_meta: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Обновить режимы потоков и правила колонок существующего подключения."""
+    row = get_connection(conn, workspace_id=workspace_id, connection_id=connection_id)
+    if row is None:
+        raise EltRepoError("connection not found")
+    src = get_source(conn, workspace_id=workspace_id, source_id=int(row["source_id"]))
+    if src is None:
+        raise EltRepoError("source not found")
+    ic = str(src["connector_code"])
+    existing_by_name = {str(s["stream_name"]): s for s in row.get("streams") or []}
+    stream_sync_defaults: dict[str, dict[str, Any]] = {}
+
+    if streams:
+        for s in streams:
+            sn = str(s.get("stream_name") or "").strip()
+            if not sn:
+                raise EltRepoError("stream_name is required")
+            if sn not in existing_by_name:
+                raise EltRepoError(f"stream not found: {sn}")
+            sm = str(s.get("sync_mode") or "full_refresh").strip()
+            dsm = s.get("destination_sync_mode")
+            dsm = str(dsm).strip() if dsm else destination_sync_mode_for_legacy(sm)
+            cf_raw = s.get("cursor_field")
+            cf = cursor_to_storage(cf_raw)
+            pk_raw = s.get("primary_key")
+            pk = primary_key_to_storage(pk_raw)
+            errs = validate_stream_sync_config(
+                sync_mode=sm,
+                destination_sync_mode=dsm,
+                cursor_field=cf_raw,
+                primary_key=pk_raw,
+            )
+            if errs:
+                raise EltRepoError("; ".join(errs))
+            sm_eff = effective_source_sync_mode(sync_mode=sm, destination_sync_mode=dsm)
+            en = bool(s.get("is_enabled", existing_by_name[sn].get("is_enabled", True)))
+            mp = s.get("mapping_profile_id")
+            mp_id = int(mp) if mp is not None else existing_by_name[sn].get("mapping_profile_id")
+            updated = conn.execute(
+                text(
+                    "UPDATE connection_stream SET sync_mode = :sm, destination_sync_mode = :dsm, "
+                    "cursor_field = :cf, primary_key = :pk, is_enabled = :en, mapping_profile_id = :mp, updated_at = NOW() "
+                    "WHERE connection_id = :cid AND stream_name = :sn RETURNING id"
+                ),
+                {
+                    "sm": sm_eff,
+                    "dsm": dsm,
+                    "cf": cf,
+                    "pk": pk,
+                    "en": en,
+                    "mp": mp_id,
+                    "cid": connection_id,
+                    "sn": sn,
+                },
+            ).first()
+            if updated is None:
+                raise EltRepoError(f"stream update failed: {sn}")
+            csid = int(updated[0])
+            ensure_sync_state_for_stream(
+                conn,
+                integration_code=ic,
+                stream_name=sn,
+                sync_mode=sm_eff,
+                cursor_field=cf,
+                connection_stream_id=csid,
+                workspace_id=workspace_id,
+            )
+            stream_sync_defaults[sn] = {
+                "sync_mode": sm_eff,
+                "cursor_field": cf,
+                "destination_sync_mode": dsm,
+                "primary_key": _primary_key_list_from_storage(pk_raw),
+            }
+
+    if column_rules:
+        from datanorma.web.connector_schema_meta import stream_default_for
+
+        by_entity: dict[str, list[dict[str, Any]]] = {}
+        for rule in column_rules:
+            entity = rule.get("entity")
+            sn = str(entity).strip() if entity else None
+            if not sn and len(existing_by_name) == 1:
+                sn = next(iter(existing_by_name.keys()))
+            if not sn:
+                continue
+            by_entity.setdefault(sn, []).append(rule)
+
+        for sn, cols in by_entity.items():
+            if sn not in existing_by_name:
+                raise EltRepoError(f"stream not found for column rules: {sn}")
+            defaults = stream_sync_defaults.get(sn)
+            if defaults is None:
+                ex = existing_by_name[sn]
+                defaults = {
+                    "sync_mode": str(ex.get("sync_mode") or "full_refresh"),
+                    "cursor_field": ex.get("cursor_field"),
+                    "primary_key": _primary_key_list_from_storage(ex.get("primary_key")),
+                }
+                if defaults.get("sync_mode") is None:
+                    defaults = stream_default_for(ic, sn)
+            save_connection_stream_rules(
+                conn,
+                connection_id=connection_id,
+                stream_name=sn,
+                sync_mode=str(defaults.get("sync_mode") or "full_refresh"),
+                cursor_field=defaults.get("cursor_field"),
+                primary_key=defaults.get("primary_key") or [],
+                columns=cols,
+            )
+
+    if wizard_meta is not None:
+        wm_existing = row.get("wizard_meta")
+        if wm_existing is not None and not isinstance(wm_existing, dict):
+            try:
+                wm_existing = json.loads(wm_existing) if isinstance(wm_existing, str) else None
+            except json.JSONDecodeError:
+                wm_existing = None
+        merged: dict[str, Any] = dict(wm_existing) if isinstance(wm_existing, dict) else {}
+        merged.update(wizard_meta)
+        conn.execute(
+            text(
+                "UPDATE connection SET wizard_meta = CAST(:wm AS jsonb), updated_at = NOW() "
+                "WHERE id = :id AND workspace_id = :wid"
+            ),
+            {
+                "wm": json.dumps(merged, ensure_ascii=False),
+                "id": connection_id,
+                "wid": workspace_id,
+            },
+        )
+
+    out = get_connection(conn, workspace_id=workspace_id, connection_id=connection_id)
+    if out is None:
+        raise EltRepoError("connection not found")
+    return out
+
+
 def patch_connection_row(
     conn: Connection,
     *,
@@ -433,6 +601,21 @@ def patch_connection_row(
     fields: dict[str, Any],
 ) -> dict[str, Any] | None:
     """Применить частичное обновление connection (в т.ч. schedule_cron=NULL)."""
+    streams = fields.pop("streams", None)
+    column_rules = fields.pop("column_rules", None)
+    wizard_meta = fields.pop("wizard_meta", None)
+    if streams is not None or column_rules is not None or wizard_meta is not None:
+        try:
+            update_connection_streams_config(
+                conn,
+                workspace_id=workspace_id,
+                connection_id=connection_id,
+                streams=streams,
+                column_rules=column_rules,
+                wizard_meta=wizard_meta,
+            )
+        except EltRepoError:
+            raise
     allowed = {"name", "description", "status", "schedule_cron", "timezone", "is_active"}
     patch = {k: v for k, v in fields.items() if k in allowed}
     if not patch:
@@ -508,26 +691,48 @@ def ensure_sync_state_for_stream(
     sync_mode: str,
     cursor_field: str | None,
     connection_stream_id: int,
+    workspace_id: int | None = None,
 ) -> None:
+    """Создаёт или обновляет sync_state для одного connection_stream (не переиспользует чужие строки)."""
     cv = json.dumps({"cursor": None, "via": "elt_domain"}, ensure_ascii=False)
     ingest = json.dumps({"cursor": None, "rows_emitted": 0, "via": "elt_domain"}, ensure_ascii=False)
+    existing = conn.execute(
+        text("SELECT id FROM sync_state WHERE connection_stream_id = :csid"),
+        {"csid": connection_stream_id},
+    ).first()
+    if existing is not None:
+        conn.execute(
+            text(
+                "UPDATE sync_state SET sync_mode = :sm, cursor_field = :cf, updated_at = NOW() "
+                "WHERE connection_stream_id = :csid"
+            ),
+            {"sm": sync_mode, "cf": cursor_field, "csid": connection_stream_id},
+        )
+        return
+
+    cols = (
+        "integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, "
+        "last_success_at, updated_at, connection_stream_id"
+    )
+    vals = (
+        ":ic, :sn, :sm, :cf, CAST(:cv AS text), CAST(:ingest AS jsonb), NULL, NOW(), :csid"
+    )
+    params: dict[str, Any] = {
+        "ic": integration_code,
+        "sn": stream_name,
+        "sm": sync_mode,
+        "cf": cursor_field,
+        "cv": cv,
+        "ingest": ingest,
+        "csid": connection_stream_id,
+    }
+    if workspace_id is not None:
+        cols += ", workspace_id"
+        vals += ", :wid"
+        params["wid"] = workspace_id
     conn.execute(
-        text(
-            "INSERT INTO sync_state (integration_code, stream_name, sync_mode, cursor_field, cursor_value, ingest_state, last_success_at, updated_at, connection_stream_id) "
-            "VALUES (:ic, :sn, :sm, :cf, CAST(:cv AS text), CAST(:ingest AS jsonb), NULL, NOW(), :csid) "
-            "ON CONFLICT (integration_code, stream_name) DO UPDATE SET "
-            "sync_mode = EXCLUDED.sync_mode, cursor_field = EXCLUDED.cursor_field, "
-            "connection_stream_id = EXCLUDED.connection_stream_id, updated_at = NOW()"
-        ),
-        {
-            "ic": integration_code,
-            "sn": stream_name,
-            "sm": sync_mode,
-            "cf": cursor_field,
-            "cv": cv,
-            "ingest": ingest,
-            "csid": connection_stream_id,
-        },
+        text(f"INSERT INTO sync_state ({cols}) VALUES ({vals})"),
+        params,
     )
 
 

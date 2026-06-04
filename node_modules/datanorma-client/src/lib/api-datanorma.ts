@@ -205,14 +205,16 @@ function mapNormSeverity(issueType: string): Issue["severity"] {
 }
 
 export function mapNormRowToIssue(row: NormIssueRowDto): Issue {
+  const issueType = row.issue_type || row.error_code || "cast_error";
+  const msg = row.message ?? row.error_text ?? "—";
   return {
     id: String(row.id),
-    severity: mapNormSeverity(row.issue_type),
-    type: row.issue_type,
-    connection: row.source_system ?? "—",
-    stream: row.batch_id ?? "—",
-    field: row.field_name ?? "—",
-    original: row.message ?? "—",
+    severity: mapNormSeverity(issueType),
+    type: issueType,
+    connection: row.connection_name ?? (row.connection_id != null ? `#${row.connection_id}` : row.source_system ?? "—"),
+    stream: row.stream_name ?? row.batch_id ?? "—",
+    field: row.field_name ?? row.target_field ?? "—",
+    original: msg,
     suggested: row.source_record_id ? `record:${row.source_record_id}` : "—",
     status: row.status ?? "open",
   };

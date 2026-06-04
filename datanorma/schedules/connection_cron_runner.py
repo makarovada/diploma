@@ -11,9 +11,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection, Engine
 
 from datanorma.config import get_settings
-from datanorma.web.sync_launch import launch_sync_run_via_dagster, run_sync_inline_fallback
+from datanorma.web.sync_launch import run_sync_inline_for_connection
 from datanorma.web.sync_runs import (
-    SyncRunError,
     create_sync_run,
     mark_sync_run_failed,
 )
@@ -132,14 +131,13 @@ def run_scheduled_sync(
             "meta": json.dumps({"schedule_slot": slot_key}, ensure_ascii=False),
         },
     )
-    trigger_user = "schedule"
     try:
-        launch_sync_run_via_dagster(
+        run_sync_inline_for_connection(
             conn=conn,
             run_id=run_id,
-            integration_code=integration_code,
-            stream_name="*",
-            triggered_by=trigger_user,
+            workspace_id=workspace_id,
+            domain_connection_id=domain_connection_id,
+            extra_meta={"schedule_slot": slot_key},
         )
         conn.execute(
             text(
@@ -148,40 +146,15 @@ def run_scheduled_sync(
             {
                 "id": run_id,
                 "meta": json.dumps(
-                    {"schedule_slot": slot_key, "execution_mode": "dagster"},
+                    {"schedule_slot": slot_key, "execution_mode": "inline"},
                     ensure_ascii=False,
                 ),
             },
         )
-        return
-    except SyncRunError as dagster_exc:
-        try:
-            run_sync_inline_fallback(
-                conn=conn,
-                run_id=run_id,
-                workspace_id=workspace_id,
-                domain_connection_id=domain_connection_id,
-                dagster_error=dagster_exc,
-                extra_meta={"schedule_slot": slot_key},
-            )
-        except Exception as inline_exc:
-            mark_sync_run_failed(conn, run_id=run_id, message=str(inline_exc))
-            _log.exception(
-                "Scheduled ELT sync fallback failed connection_id=%s run_id=%s",
-                domain_connection_id,
-                run_id,
-            )
-            raise
-        _log.warning(
-            "Dagster unavailable for scheduled run, used inline fallback connection_id=%s run_id=%s: %s",
-            domain_connection_id,
-            run_id,
-            dagster_exc,
-        )
     except Exception as exc:
         mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
         _log.exception(
-            "Scheduled Dagster launch failed connection_id=%s run_id=%s",
+            "Scheduled ELT sync failed connection_id=%s run_id=%s",
             domain_connection_id,
             run_id,
         )
