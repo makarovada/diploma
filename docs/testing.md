@@ -37,7 +37,7 @@
      ```powershell
      [Environment]::SetEnvironmentVariable(
        "Path",
-       $env:Path + ";C:\allure-2.34.1\bin",
+       $env:Path + ";C:\allure-2.40.0\bin",
        "User"
      )
      ```
@@ -83,11 +83,69 @@ allure generate allure-results --clean -o allure-report
 allure open allure-report
 ```
 
-На Windows можно вызвать `scripts/run_tests_allure.ps1` из корня репозитория (после установки Allure в `PATH`).
+На Windows можно вызвать `scripts/run_tests_allure.ps1` из корня репозитория (после установки Allure в `PATH`). На Linux/macOS — `scripts/run_tests_allure.sh`.
+
+Только сгенерировать HTML без `serve` (например, если `allure-results` уже есть):
+
+```powershell
+scripts/generate_allure_report.ps1
+```
+
+### CI
+
+В GitHub Actions job `backend-tests` после прогона тестов собирается артефакт **`allure-report`** (HTML). Скачайте его на странице workflow run → Artifacts и откройте `index.html` локально.
 
 **Без локальной Java** можно поднять отчёт в Docker — см. [fescobar/allure-docker-service](https://github.com/fescobar/allure-docker-service): смонтируйте каталог `allure-results` и откройте UI по адресу из логов контейнера (по умолчанию порт 5050).
 
 Дополнительные метки в коде: декораторы из `allure` (`@allure.feature`, `@allure.story`, `@allure.title`) — см. [документацию allure-python](https://docs.qameta.io/allure-report/frameworks/python/pytest/).
+
+## Нагрузочное тестирование (Locust)
+
+Сценарии имитируют интегратора: логин и чтение каталога, источников, приёмников, подключений, очереди и run history.
+
+**Требования:** запущенный API (`docker compose up -d` или `python -m datanorma.web`), сиды (`python scripts/seed_database.py`).
+
+1. Установить зависимости:
+
+```bash
+pip install -e ".[load]"
+```
+
+2. **Интерактивный режим** (веб-UI Locust на http://127.0.0.1:8089):
+
+```bash
+locust -f loadtests/locustfile.py --host http://127.0.0.1:8080
+```
+
+3. **Headless** (HTML + CSV в `loadtest-results/`):
+
+```powershell
+.\scripts\run_load_tests.ps1
+```
+
+Параметры через переменные окружения:
+
+| Переменная | По умолчанию | Назначение |
+|------------|--------------|------------|
+| `LOAD_TEST_HOST` | `http://127.0.0.1:8080` | Базовый URL API |
+| `LOAD_TEST_USER` | `seed_integrator` | Логин |
+| `LOAD_TEST_PASSWORD` | `IntegratorDemo2026` | Пароль |
+| `LOAD_TEST_WORKSPACE` | `1` | Заголовок `X-Workspace-Id` |
+| `LOAD_TEST_USERS` | `10` | Виртуальных пользователей |
+| `LOAD_TEST_SPAWN_RATE` | `2` | Пользователей/сек при разгоне |
+| `LOAD_TEST_DURATION` | `1m` | Длительность прогона |
+
+Пример более жёсткого прогона:
+
+```powershell
+$env:LOAD_TEST_USERS = "50"
+$env:LOAD_TEST_DURATION = "3m"
+.\scripts\run_load_tests.ps1
+```
+
+Откройте `loadtest-results/report.html` — там RPS, latency (median/p95/p99) и доля ошибок по каждому endpoint.
+
+**Замечание:** нагрузочные тесты не входят в обычный CI (нужен живой сервер); запускайте вручную перед приёмкой или на staging.
 
 ## Что проверяется
 

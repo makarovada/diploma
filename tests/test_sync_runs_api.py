@@ -8,9 +8,11 @@ from fastapi.testclient import TestClient
 from datanorma.web import api_router as api_mod
 from datanorma.web.deps import AuthUser, get_conn, get_current_user
 from datanorma.web.main import create_app
-from datanorma.web.sync_runs import DagsterLaunchResult, SyncRunError
+from datanorma.web.sync_runs import SyncRunError
 
 pytestmark = pytest.mark.integration
+
+_WS_HEADERS = {"X-Workspace-Id": "1"}
 
 
 def _client() -> TestClient:
@@ -39,16 +41,16 @@ def test_trigger_sync_launch_success(monkeypatch) -> None:
         )
         monkeypatch.setattr(
             api_mod,
-            "launch_dagster_run",
-            lambda *_a, **_k: DagsterLaunchResult(run_id="dagster-77", status="running"),
+            "launch_sync_run_via_dagster",
+            lambda **_k: {"id": 77, "status": "running", "dagster_run_id": "dagster-77"},
         )
-        monkeypatch.setattr(
-            api_mod,
-            "mark_sync_run_running",
-            lambda *_a, **_k: {"id": 77, "status": "running", "dagster_run_id": "dagster-77"},
-        )
+        monkeypatch.setattr(api_mod, "record_audit_event", lambda *_a, **_k: None)
 
-        resp = client.post("/api/v1/syncs/trigger", json={"connection_id": 1, "note": "smoke"})
+        resp = client.post(
+            "/api/v1/syncs/trigger",
+            json={"connection_id": 1, "note": "smoke"},
+            headers=_WS_HEADERS,
+        )
         assert resp.status_code == 202
         data = resp.json()
         assert data["run_id"] == 77
@@ -61,12 +63,13 @@ def test_trigger_sync_launch_failed(monkeypatch) -> None:
         monkeypatch.setattr(api_mod, "create_sync_run", lambda *_a, **_k: {"id": 12})
         monkeypatch.setattr(
             api_mod,
-            "launch_dagster_run",
-            lambda *_a, **_k: (_ for _ in ()).throw(SyncRunError("dagster is unavailable")),
+            "launch_sync_run_via_dagster",
+            lambda **_k: (_ for _ in ()).throw(SyncRunError("dagster is unavailable")),
         )
         monkeypatch.setattr(api_mod, "mark_sync_run_failed", lambda *_a, **_k: {"id": 12, "status": "failed"})
+        monkeypatch.setattr(api_mod, "record_audit_event", lambda *_a, **_k: None)
 
-        resp = client.post("/api/v1/syncs/trigger", json={"connection_id": 1})
+        resp = client.post("/api/v1/syncs/trigger", json={"connection_id": 1}, headers=_WS_HEADERS)
         assert resp.status_code == 502
         detail = resp.json()["detail"]
         assert detail["error_code"] == "dagster_launch_failed"

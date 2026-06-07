@@ -18,7 +18,6 @@ export type NavItem = {
   href: string;
   label: string;
   icon: LucideIcon;
-  badge?: string;
   match?: "exact" | "prefix";
   /** Скрыть пункт, если нет workspace-права. */
   requiredPermission?: string;
@@ -44,7 +43,7 @@ export const navSections: { title: string; items: NavItem[] }[] = [
   {
     title: "Синхронизация",
     items: [
-      { href: "/runs", label: "Запуски", icon: PlayCircle, badge: "1", match: "prefix" },
+      { href: "/runs", label: "Запуски", icon: PlayCircle, match: "prefix" },
       { href: "/schedules", label: "Расписания", icon: CalendarClock, match: "exact" },
       { href: "/queue", label: "Очередь", icon: Warehouse, match: "exact" },
     ],
@@ -52,7 +51,7 @@ export const navSections: { title: string; items: NavItem[] }[] = [
   {
     title: "Данные",
     items: [
-      { href: "/issues", label: "Проблемные записи", icon: CircleAlert, badge: "73", match: "prefix" },
+      { href: "/issues", label: "Проблемные записи", icon: CircleAlert, match: "prefix" },
     ],
   },
   {

@@ -78,15 +78,12 @@ export function SidebarContent({
                       data-testid={testId}
                       onClick={onNavigate}
                       className={cn(
-                        "flex items-center justify-between rounded-md px-3 py-2 text-sm",
+                        "flex items-center gap-2 rounded-md px-3 py-2 text-sm",
                         active ? "bg-secondary font-medium text-secondary-foreground" : "hover:bg-muted",
                       )}
                     >
-                      <span className="flex items-center gap-2">
-                        <item.icon className="h-4 w-4" />
-                        {item.label}
-                      </span>
-                      {item.badge ? <span className="rounded-full bg-warning/20 px-2 text-xs">{item.badge}</span> : null}
+                      <item.icon className="h-4 w-4" />
+                      {item.label}
                     </Link>
                   );
                 })}

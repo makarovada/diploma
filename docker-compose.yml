@@ -50,6 +50,7 @@ services:
     volumes:
       - ./data:/app/data:ro
       - ./config/secrets:/app/config/secrets:ro
+      - ./client/dist:/app/client/dist:ro
     ports:
       - "8080:8080"
 
