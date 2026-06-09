@@ -6,12 +6,11 @@ DataNorma - дипломная платформа интеграции и нор
 ## Что важно сейчас
 
 - Интерфейс: React SPA под `/ui/` (сборка из `client/`).
-- Основная обработка данных описывается слоистой схемой:
-  - `raw.*` - сырой слой из коннекторов;
-  - `normalized.*` - структурная нормализация;
-  - `semantic.*` - бизнес-витрины на dbt.
-- Канонический `canonical_*` слой удалён; stream-правила задаются через `ColumnRule/StreamRules`.
-- Для веб-аналитики актуальный источник - Яндекс Метрика (Unisender в актуальном контуре не используется).
+- Продуктовый контур: **connection sync** — `source.read → cast_row(StreamRules) → destination.write`.
+- Нормализация per-stream: `ColumnRule` / `StreamRules` в мастере подключения.
+- Источники в каталоге: `google_sheet`, `bitrix24`, `moysklad`, `amocrm`, `yandex_metrika`, `rest_builder`.
+- Приёмники: `postgres`, `clickhouse`, `csv`, `xlsx`.
+- Бизнес-витрины — dbt-модели в `semantic.*` (опционально, после загрузки в warehouse).
 
 ## Быстрый запуск
 
@@ -24,15 +23,15 @@ alembic upgrade head
 python scripts/seed_database.py
 ```
 
-Запуск сервисов:
+Запуск (продуктовый контур):
 
 ```bash
-dagster dev -m datanorma.definitions
 python -m datanorma.web
 ```
 
 - Web/API: `http://127.0.0.1:8080`
-- Dagster UI: обычно `http://127.0.0.1:3000`
+
+Опционально Dagster (demo assets, dbt): `dagster dev -m datanorma.definitions` → UI обычно `http://127.0.0.1:3000`
 
 ## Demo users
 
@@ -48,7 +47,7 @@ python -m datanorma.web
 - `docs/connectors.md` - источники и контракт коннекторов.
 - `docs/yandex_metrika_connector.md` - коннектор Яндекс Метрики.
 - `docs/normalization_rules.md` - структурная нормализация.
-- `docs/frontend.md` - UI стратегия React + Jinja fallback.
+- `docs/frontend.md` - React SPA, маршруты, мастер подключения.
 - `docs/api.md` - API и основные endpoints.
 - `docs/security.md` - auth, RBAC, CORS, секреты.
 - `docs/deploy.md` - локальный и базовый production deployment.

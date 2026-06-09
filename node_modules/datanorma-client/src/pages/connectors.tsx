@@ -2,7 +2,6 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { LinkAsButton } from "@/components/link-as-button";
 import { PageHeader } from "@/components/page-header";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
 import { fetchV1ConnectorsCatalog } from "@/lib/api-datanorma";
@@ -54,7 +53,7 @@ export function ConnectorsPage() {
 
   return (
     <div className="p-4">
-      <PageHeader title="Каталог коннекторов" description="Доступные источники и приёмники для интеграций" breadcrumbs="Интеграции / Каталог коннекторов" actions={<Button data-testid="button-request-connector">Запросить коннектор</Button>} />
+      <PageHeader title="Каталог коннекторов" description="Доступные источники и приёмники для интеграций" breadcrumbs="Интеграции / Каталог коннекторов" />
       <div className="mb-4 flex flex-wrap items-end gap-2">
         <Input className="max-w-md" placeholder="Поиск по названию или категории…" value={q} onChange={(e) => setQ(e.target.value)} data-testid="input-connectors-search" />
         <div className="flex flex-wrap gap-2">
@@ -70,9 +69,6 @@ export function ConnectorsPage() {
             <option value="intl">Международные</option>
           </select>
         </div>
-        <Button type="button" variant="outline" data-testid="button-rest-connector">
-          Создать REST-коннектор
-        </Button>
       </div>
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="grid-connectors">
         {filtered.map((c) => (

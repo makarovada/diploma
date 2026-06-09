@@ -106,11 +106,22 @@ export function AuthProvider({ children }: PropsWithChildren) {
         setLocation(`/login?next=${next}`);
       },
       on403: (body) => {
+        try {
+          const j = JSON.parse(body) as { detail?: { error_code?: string } | string };
+          const d = j.detail;
+          if (typeof d === "object" && d !== null && d.error_code === "workspace_forbidden") {
+            clearStoredWorkspaceId();
+            void refreshMe();
+            return;
+          }
+        } catch {
+          /* ignore */
+        }
         setForbiddenMessage(parse403Message(body));
         setLocation("/forbidden");
       },
     });
-  }, [setLocation]);
+  }, [setLocation, refreshMe]);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,6 +136,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
       try {
         const me = await fetchAuthMe();
         if (!cancelled) {
+          syncWorkspaceStorageWithMe(me);
           setUser(me);
           setStatus("authenticated");
         }
@@ -141,7 +153,7 @@ export function AuthProvider({ children }: PropsWithChildren) {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [syncWorkspaceStorageWithMe]);
 
   const login = useCallback(
     async (username: string, password: string, returnTo?: string | null) => {

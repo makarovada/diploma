@@ -1,18 +1,11 @@
-import { Bell, LogOut, Menu, Search } from "lucide-react";
+import { LogOut, Menu } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/app/auth-context";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { LinkAsButton } from "@/components/link-as-button";
 import { getStoredWorkspaceId, setStoredWorkspaceId } from "@/lib/api-client";
 
-export function AppTopbar({
-  onOpenMobileNav,
-  onOpenCommandPalette,
-}: {
-  onOpenMobileNav: () => void;
-  onOpenCommandPalette: () => void;
-}) {
+export function AppTopbar({ onOpenMobileNav }: { onOpenMobileNav: () => void }) {
   const queryClient = useQueryClient();
   const { user, logout, refreshMe } = useAuth();
   const initials =
@@ -43,30 +36,6 @@ export function AppTopbar({
           aria-label="Открыть меню"
         >
           <Menu className="h-4 w-4" />
-        </Button>
-        <div className="relative hidden min-w-0 max-w-md flex-1 md:block">
-          <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-          <Input
-            className="cursor-pointer pl-8"
-            placeholder="Поиск… (Ctrl+K)"
-            readOnly
-            onFocus={onOpenCommandPalette}
-            onClick={onOpenCommandPalette}
-            data-testid="input-global-search"
-          />
-        </div>
-        <Button
-          type="button"
-          variant="outline"
-          className="md:hidden"
-          onClick={onOpenCommandPalette}
-          data-testid="button-search-mobile"
-          aria-label="Поиск"
-        >
-          <Search className="h-4 w-4" />
-        </Button>
-        <Button type="button" variant="outline" onClick={onOpenCommandPalette} className="hidden sm:inline-flex" data-testid="button-open-command-palette">
-          Ctrl+K
         </Button>
         <LinkAsButton href="/connections/new" data-testid="button-quick-action">
           Создать подключение
@@ -102,9 +71,6 @@ export function AppTopbar({
           <span className="h-2 w-2 rounded-full bg-success" />
           Система в норме
         </span>
-        <Button variant="outline" data-testid="button-notifications" aria-label="Уведомления">
-          <Bell className="h-4 w-4" />
-        </Button>
         <span className="hidden max-w-[10rem] truncate text-xs text-muted-foreground sm:inline" title={user?.username}>
           {user?.username}
         </span>

@@ -40,10 +40,6 @@ export function StreamReplicationModeEditor({
     <div className="space-y-4" data-testid={tid("editor")}>
       <div>
         <p className="text-sm font-medium">Режим передачи данных</p>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Как в Airbyte: сочетание способа чтения источника и записи в приёмник (перезапись, добавление,
-          дедупликация по ключу).
-        </p>
       </div>
       {streams.map((st) => {
         const presetId = replicationPresetFromFields(st.sync_mode, st.destination_sync_mode);

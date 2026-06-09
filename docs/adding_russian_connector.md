@@ -1,90 +1,78 @@
 # Добавление нового российского коннектора
 
-Гайд описывает единый путь добавления источника данных в DataNorma для российского рынка (например, СБИС, МойСклад, Wildberries, Яндекс Маркет и др.).
+Гайд для источников российского рынка (СБИС, Яндекс Маркет и др.) в актуальном ELT-контуре DataNorma.
 
-## 1. Выберите способ реализации
+## 1. Способ реализации
 
-## 1.1 Low-code через REST Builder
+### 1.1 REST Builder (low-code)
 
-Используйте, если источник имеет HTTP API и достаточно декларативной конфигурации:
-- файл: `datanorma/schemas/connector_builder.yaml`;
-- реализация: `datanorma/sources/builder.py`.
+Если источник имеет HTTP API и достаточно декларативной конфигурации:
 
-Подходит для быстрых интеграций без отдельного Python-класса.
+- схема: `datanorma/schemas/connector_builder.yaml`;
+- реализация: `datanorma/sources/builder.py` (`RestBuilderSource`);
+- код в каталоге: `rest_builder`.
 
-## 1.2 Полноценный Python source
+### 1.2 Python source
 
-Используйте, если нужны:
-- сложная авторизация;
-- нестандартная пагинация;
-- специальные правила трансформации на уровне чтения.
+Если нужны сложная авторизация, нестандартная пагинация или трансформации при чтении:
 
-Шаги:
-1. Добавьте новый модуль в `datanorma/sources/`.
-2. Реализуйте контракт `check()/discover()/read()`.
-3. Зарегистрируйте источник в factory/registry (`datanorma/sources/registry.py`).
+1. Модуль в `datanorma/sources/<name>.py`.
+2. Контракт `check()` / `discover()` / `read()`.
+3. Регистрация в `datanorma/sources/registry.py` (`SOURCE_KINDS`, `create_source`).
+4. Фикстуры в `data/fixtures/<connector>/` для офлайн-тестов.
+5. Добавить коннектор в UI-каталог (если не скрыт): метаданные в `discover` / catalog API.
 
-## 2. Опишите stream-конфиг и правила нормализации
+## 2. Stream rules и нормализация
 
-Используйте `default_stream_rules()` в source-классе и/или сохранение правил через API:
-- `PUT /api/v1/connections/{connection_id}/streams/{stream_name}/rules`
-- `POST /api/v1/connections/preview-rules`
+Правила задаются per-connection, не глобальным YAML:
 
-Минимальный набор на stream:
-- `sync_mode`
-- `cursor_field` (для incremental)
-- `primary_key`
-- `columns[]` (`source_field`, `target_field`, `type`, `required`, `nullable`)
+- `default_stream_rules()` в source-классе — авто-вывод из JSON Schema;
+- сохранение через API:
+  - `PUT /api/v1/connections/{id}/streams/{stream}/rules`
+  - `POST /api/v1/connections/preview-rules`
 
-Важно: в актуальном контуре маппинг должен обеспечивать корректный путь
-`raw.* -> normalized.* -> semantic.*` и не обходить слои напрямую.
+Минимум на stream: `sync_mode`, `cursor_field` (для incremental), `primary_key`, `columns[]` (`source_field`, `target_field`, `type`, `required`, `nullable`).
 
-## 3. Проверьте source в UI и API
+Нормализация применяется в `cast_row` на этапе sync, не в отдельном batch-job.
 
-Минимальные проверки:
-- UI: мастер нового подключения в `/ui/` (check + discover);
-- API: потоки `sync_state` через `/api/v1/sync-streams`; доменные connections — `/api/v1/connections`.
+## 3. Проверка в UI и API
 
-Ожидаемо:
-- `check` подтверждает доступность интеграции;
-- `discover` возвращает непустую схему;
-- stream корректно появляется в конфигурации связей.
+| Шаг | Действие |
+|-----|----------|
+| check | `POST /api/v1/sources/{id}/check` |
+| discover | `POST /api/v1/sources/{id}/discover` — непустые streams |
+| connection | Мастер `/connections/new` → колонки и типы |
+| sync | `POST /api/v1/connections/{id}/trigger` |
+| state | `GET /api/v1/sync-streams` — обновление cursor |
 
-## 4. Прогоните pipeline end-to-end
+## 4. End-to-end через connection sync
 
 1. `alembic upgrade head`
-2. `dagster dev -m datanorma.definitions`
-3. Материализуйте:
-   - `sync_catalog`
-   - соответствующий `extract/raw` asset
-   - `staging_raw_postgres`
-   - `normalize`-слой (`normalized_*`)
-   - `dbt_run`
-   - проверка данных в `semantic.*`
+2. `python scripts/seed_database.py` (опционально)
+3. `python -m datanorma.web`
+4. Создать source → destination → connection в UI.
+5. Запустить sync, проверить `/runs` и данные в destination.
+6. При ошибках типизации — `/issues`.
 
-Проверьте:
-- записи в `raw_*_staging`;
-- обновление `sync_state`;
-- появление данных в `normalized.*` и затем в `semantic.*`.
+Dagster (`dagster dev -m datanorma.definitions`) — опционально для demo assets и `dbt_run`.
 
-## 5. Проверка качества для нового коннектора
+## 5. Чеклист качества
 
-Чеклист:
 - incremental-курсор обновляется в `sync_state`;
-- ошибки отдельных строк не валят весь batch;
-- `discover` стабилен и не пуст;
-- есть минимум один smoke-тест для нового source;
-- в UI/API нет регрессий по RBAC.
+- ошибки отдельных строк не валят весь batch (`on_error: null`);
+- `discover` стабилен на фикстурах;
+- тест `tests/test_<connector>_connector.py`;
+- RBAC: операции требуют workspace-права.
 
-## 6. Рекомендации по production-ready развитию
+## 6. Рекомендации
 
-- Добавляйте тестовые фикстуры в `data/samples/` для fallback-режима.
-- Явно документируйте обязательные env-переменные.
-- Нормализуйте поля источника как можно ближе к структурной схеме `normalized`-слоя, а бизнес-логику выносите в dbt.
-- Для нестабильных API заранее закладывайте стратегию ретраев и идемпотентности чтения.
+- Фикстуры в `data/fixtures/` и `data/samples/`.
+- Документировать env-переменные в `.env.example` и `docs/connectors.md`.
+- Структурную нормализацию — в `ColumnRule`; бизнес-логику — в dbt `semantic.*`.
+- Для нестабильных API — ретраи и идемпотентность в `read`.
 
 ## 7. Связанные документы
 
-- Карта проекта и runbook: `README.md`
-- Сравнение с Ingest: `docs/comparison_ingest.md`
-- Ручное тестирование: `docs/manual_testing_guide.md`
+- [connectors.md](connectors.md)
+- [comparison_ingest.md](comparison_ingest.md)
+- [testing.md](testing.md)

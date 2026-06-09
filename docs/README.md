@@ -4,30 +4,31 @@
 
 ## Основные документы
 
-- `README.md` - короткий старт и ссылки на ключевые разделы.
-- `docs/architecture.md` - целевая архитектура и поток `raw -> normalized -> semantic`.
-- `docs/data_layers.md` - описание слоев данных и границ ответственности.
-- `docs/dbt_models.md` - правила добавления бизнес-витрин в dbt.
-- `docs/connectors.md` - контракт и каталог коннекторов.
-- `docs/yandex_metrika_connector.md` - специфика источника Яндекс Метрика.
-- `docs/normalization_rules.md` - структурная нормализация.
-- `docs/frontend.md` - стратегия React UI.
-- `docs/backend.md` - backend-компоненты.
-- `docs/api.md` - API-карта.
-- `docs/security.md` - auth/RBAC/CORS/секреты.
-- `docs/deploy.md` - запуск и deployment.
-- `docs/testing.md` - проверки и smoke.
-- `docs/user_guide.md` - инструкции по ролям.
-- `docs/acceptance_plan.md` - ПМИ и критерии приемки.
-- `docs/manual_testing_guide.md` - подробные ручные сценарии.
-- `docs/comparison_ingest.md` - позиционирование относительно Ingest.
-- `docs/adding_russian_connector.md` - инструкция по добавлению нового коннектора.
-- `docs/vkr_rbac_text.md` - материал по RBAC для ВКР.
+| Документ | Содержание |
+|----------|------------|
+| [architecture.md](architecture.md) | Архитектура, ELT-поток, схема метаданных |
+| [data_layers.md](data_layers.md) | Слои `raw` / `normalized` / `semantic` |
+| [connectors.md](connectors.md) | Каталог коннекторов и контракт |
+| [normalization_rules.md](normalization_rules.md) | `ColumnRule` / `StreamRules`, `cast_row` |
+| [dbt_models.md](dbt_models.md) | Бизнес-витрины в `semantic.*` |
+| [yandex_metrika_connector.md](yandex_metrika_connector.md) | Источник Яндекс Метрика |
+| [backend.md](backend.md) | Модули Python-пакета |
+| [frontend.md](frontend.md) | React SPA, маршруты, мастер подключения |
+| [api.md](api.md) | Карта REST API |
+| [security.md](security.md) | Auth, workspace ACL, CORS |
+| [deploy.md](deploy.md) | Локальный и production запуск |
+| [testing.md](testing.md) | pytest, Vitest, Playwright, Allure, Locust |
+| [user_guide.md](user_guide.md) | Роли и сценарии |
+| [acceptance_plan.md](acceptance_plan.md) | ПМИ и критерии приёмки |
+| [comparison_ingest.md](comparison_ingest.md) | Позиционирование vs Ingest |
+| [adding_russian_connector.md](adding_russian_connector.md) | Добавление нового source |
+| [vkr_rbac_text.md](vkr_rbac_text.md) | Материал по RBAC для ВКР |
+
+Корневой [README.md](../README.md) — быстрый старт.
 
 ## Стандарт документации
 
-Для всех документов в проекте используется:
-- русский язык как основной;
-- единая терминология: `sources`, `destinations`, `connections`, `sync`, `raw`, `normalized`, `semantic`, `RBAC`, `MVP`;
-- согласованное описание границ текущей версии;
-- ссылки на связанные документы между разделами.
+- русский язык;
+- терминология: `source`, `destination`, `connection`, `sync`, `stream`, `StreamRules`, `ColumnRule`, workspace, RBAC;
+- продуктовый контур: connection sync (`source.read → cast_row → destination.write`);
+- бизнес-витрины — dbt `semantic.*`, не жёсткие ORM-модели в backend.

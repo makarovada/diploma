@@ -2,40 +2,45 @@
 
 ## Назначение
 
-Источник `yandex_metrika` (`datanorma/sources/yandex_metrika.py`) реализует `check`, `discover`, `read`
-для потоков:
+Источник `yandex_metrika` (`datanorma/sources/yandex_metrika.py`) реализует `check`, `discover`, `read` для потоков:
 
 - `summary`
 - `visits`
 - `hits`
 - `goals_reaches`
 
+Layout в мастере подключения: **entities** (чекбоксы сущностей).
+
 ## Режимы работы
 
-- OAuth mode: используются `YANDEX_METRIKA_OAUTH_TOKEN` и `YANDEX_METRIKA_COUNTER_ID` для проверки счетчика.
-- Fixture mode: при отсутствии OAuth коннектор работает на sample JSON в `data/samples/`.
+| Режим | Условие | Поведение |
+|-------|---------|-----------|
+| OAuth | `YANDEX_METRIKA_OAUTH_TOKEN` + `YANDEX_METRIKA_COUNTER_ID` в env или config source | `check` через Management API |
+| Fixture | OAuth не задан | чтение из `data/samples/yandex_metrika_*.json` |
 
-## Слои данных
+Config source (JSON): `oauth_token`, `counter_id`.
 
-Для актуальной архитектуры поток должен проходить через слои:
+## Поток данных
 
-1. `raw.yandex_metrika__<stream>`
-2. `normalized.yandex_metrika__<stream>`
-3. `semantic.*` через dbt-модели маркетингового домена.
+Продуктовый контур — connection sync:
 
-Существующие legacy-таблицы и канонические сущности могут оставаться временно для обратной совместимости,
-но новые изменения ориентируются на `raw/normalized/semantic`.
+1. `source.read(stream)` — извлечение визитов, hits и т.д.
+2. `cast_row(StreamRules)` — типизация по правилам connection.
+3. `destination.write` — запись в выбранный приёмник (`postgres`, `csv`, …).
 
-## dbt интеграция
+При destination `postgres` данные попадают в `schema.table` из config приёмника.
 
-Текущие модели в репозитории:
+## dbt-интеграция
+
+Модели в репозитории (читают из `normalized.*` после warehouse-загрузки):
 
 - `dbt/models/marketing/yandex_metrika_visits.sql`
 - `dbt/models/marketing/yandex_metrika_goal_reaches.sql`
 
-Модели читают из `normalized`-источников и формируют аналитический слой.
+Просмотр через API: `GET /api/v1/dbt/models`.
 
-## Изменение требований
+dbt запускается отдельно (`dbt run` или Dagster asset `dbt_run`), не в inline sync.
 
-Для веб-аналитики в актуальном каталоге используется Яндекс Метрика.
-Unisender в актуальных сценариях не является обязательным источником.
+## Smoke-сценарий
+
+См. [testing.md](testing.md) — раздел «Smoke: Яндекс Метрика → PostgreSQL + cron».

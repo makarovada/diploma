@@ -37,10 +37,9 @@ DataNorma — платформа интеграции и нормализаци�
 | `moysklad` | МойСклад | **entities** | заказы, товары, остатки, … |
 | `amocrm` | amoCRM | **entities** | сделки, контакты, компании, … |
 | `yandex_metrika` | Яндекс Метрика | **entities** | визиты, hits, цели, … |
+| `rest_builder` | REST API (YAML) | **flat** | потоки из декларативного YAML |
 
-Реализации: `datanorma/sources/`. Фикстуры для тестов — `data/fixtures/<connector>/`.
-
-Коннекторы **Ozon**, **1C** и **Wildberries** в каталоге и мастере создания source **не предлагаются**: нет тестового стенда для проверки соединения (`check`).
+Реализации: `datanorma/sources/`. Фикстуры для тестов — `data/fixtures/<connector>/` и `data/samples/`. Каталог в UI фильтруется в `client/src/lib/connector-catalog.ts`.
 
 ## Приёмники (destinations)
 
@@ -70,7 +69,9 @@ DataNorma — платформа интеграции и нормализаци�
 4. **state** — обновление `sync_state` / cursor per connection+stream.
 5. **complete** — статус `sync_run`, audit, issues в UI.
 
-Оркестрация: `run_connection_sync` в процессе FastAPI. Расписания — `connection_cron_runner` + scheduler в FastAPI.
+Оркестрация: `run_connection_sync` в процессе FastAPI. Расписания — `connection_cron_runner` + scheduler в FastAPI (`DATANORMA_CONNECTION_SCHEDULER`, по умолчанию вкл.).
+
+Inline sync **не** запускает dbt. Витрины `semantic.*` — отдельный шаг (`dbt run` или Dagster asset `dbt_run`).
 
 ## Компоненты инфраструктуры
 
@@ -82,7 +83,7 @@ DataNorma — платформа интеграции и нормализаци�
 
 Пользователь настраивает **колонки и типы**, а не «потоки» Airbyte:
 
-- **flat**-источники (Google Sheets): одна схема, таблица полей без выбора сущности.
+- **flat**-источники (Google Sheets, REST Builder): одна схема, таблица полей без выбора сущности.
 - **entities**-источники (Bitrix24, amoCRM, МойСклад, Яндекс Метрика): чекбоксы сущностей + колонка «Сущность» в маппинге.
 - `sync_mode` / `cursor_field` задаются автоматически из `connector_schema_meta` и не показываются в мастере.
 - Правила сохраняются в `connection.wizard_meta`, `connection_stream_rules`, `connection_column_rule`; синк применяет `cast_row` при наличии правил.
@@ -91,7 +92,7 @@ DataNorma — платформа интеграции и нормализаци�
 
 ## Схема метаданных (внутренняя PostgreSQL)
 
-Актуальная логическая модель после миграций Alembic (`017_normalization_issue_status`). Описаны только таблицы, которые использует продуктовый ELT-контур. **Не включены** устаревшие артефакты Phase A: `canonical_sales`, `typed_canonical_sales`, `canonical_marketing_events`, фиксированные `raw_*_staging`, старая форма `normalization_issue` (batch/source_system), `integration_config`, `pipeline_run_summary`, справочники `dim_*`.
+Актуальная логическая модель после миграций Alembic (`017_normalization_issue_status`). Описаны только таблицы продуктового ELT-контура.
 
 Миграции: `alembic/versions/`. Динамические таблицы данных (слои `raw` / `normalized` / `semantic`) — в [`docs/data_layers.md`](data_layers.md).
 

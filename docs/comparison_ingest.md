@@ -1,40 +1,40 @@
 # Сравнение DataNorma и Ingest
 
-Документ фиксирует текущее позиционирование DataNorma как MVP-платформы интеграции данных для малого и среднего бизнеса в РФ.
-По смыслу DataNorma следует продуктовой модели Ingest: `sources -> connections -> sync -> destination`, но реализована на собственном стеке (Dagster + FastAPI + PostgreSQL + Python/YAML-нормализация).
+Документ фиксирует позиционирование DataNorma как MVP-платформы интеграции данных для МСП в РФ.
+По смыслу DataNorma следует продуктовой модели Ingest: `sources → connections → sync → destination`, реализованной на FastAPI + PostgreSQL + React.
 
 ## Краткое сравнение
 
 | Аспект | Ingest | DataNorma (текущее состояние) |
 |--------|---------|-------------------------------|
 | **Назначение** | Универсальная EL(T)-платформа, большой ecosystem | Вертикально сфокусированный MVP под SMB РФ |
-| **Sources** | Большой каталог коннекторов + marketplace | Встроенные коннекторы (`Ozon`, `1C`, `Google Sheets`) + `rest_builder` |
-| **Destinations** | Много хранилищ и БД | Сейчас один основной destination: PostgreSQL |
-| **Connections** | Богатая модель связей source/destination в UI | Логика connections присутствует в API/UI, практический контур заточен под единый warehouse |
-| **Incremental state** | Нативный state-протокол и workers | `sync_state` в PostgreSQL + cursor filtering в pipeline |
-| **Нормализация** | Typing/Dedup + dbt-пайплайны | Кастомная бизнес-нормализация (MSK datetime, ЦБ РФ, fuzzy, units) |
-| **Оркестрация** | Собственный runtime | Dagster assets/schedules/checks/sensors |
-| **UI/API** | Зрелая product-консоль | FastAPI + React SPA (`/ui/`) + REST (`/api/*`, `/api/v1/*`) |
-| **RBAC/мультитенантность** | Развитые enterprise-сценарии | Роли и матрица операций есть; мультитенантность реализована базовым контуром |
-| **Расширяемость** | Высокая, через CDK/коннекторы | Есть source framework и YAML builder, но ecosystem пока ограничен |
+| **Sources** | Большой каталог + marketplace | `google_sheet`, `bitrix24`, `moysklad`, `amocrm`, `yandex_metrika`, `rest_builder` |
+| **Destinations** | Много хранилищ и БД | `postgres`, `clickhouse`, `csv`, `xlsx` |
+| **Connections** | Богатая модель связей в UI | Полный CRUD + мастер колонок/типов, cron, pause/resume |
+| **Incremental state** | Нативный state-протокол | `sync_state` per connection+stream, cursor в `connection_stream` |
+| **Нормализация** | Typing/Dedup + dbt | `ColumnRule` / `StreamRules`, `cast_row` при синке; dbt для `semantic.*` |
+| **Оркестрация** | Собственный runtime | Inline sync в FastAPI + опционально Dagster (demo/dbt) |
+| **UI/API** | Зрелая product-консоль | FastAPI + React SPA (`/ui/`) + `/api/v1/*` |
+| **RBAC** | Enterprise IAM | Workspace ACL + `resource_grant` |
+| **Расширяемость** | CDK/коннекторы | Python source framework + REST Builder (YAML) |
 
 ## Что уже близко к Ingest
 
-- Единая терминология `sources/destinations/connections/syncs`.
+- Единая терминология `sources` / `destinations` / `connections` / `syncs`.
 - Инкрементальный контур со state в БД.
-- Raw staging слой и последующая нормализация/загрузка в warehouse.
-- Наличие API/UI-слоя для операционной работы команды.
+- Мастер настройки колонок и типов per stream.
+- API/UI для операционной работы интегратора.
+- Нормализация на этапе load, issues в UI.
 
-## Что остаётся развить до уровня полноценной платформы
+## Что остаётся развить
 
 - Расширить библиотеку готовых российских коннекторов.
-- Добавить больше destination-адаптеров.
-- Укрепить жизненный цикл sync jobs (ретраи, более полная оркестрация через API).
-- Расширить no-code UX для конфигурирования связей и маппингов.
-- Усилить production-ready контур (CI/CD, деплой-практики, эксплуатационная наблюдаемость).
+- Автоматический `dbt run` после успешного sync.
+- Усилить production-контур (шифрование `config_encrypted`, observability).
+- Расширить no-code UX для REST Builder.
 
 ## Связанные документы
 
-- Карта проекта и runbook: `README.md`
-- Полный чеклист ручного тестирования: `docs/manual_testing_guide.md`
-- Список UI-маршрутов: `docs/phase_c_routes.md`
+- [README.md](../README.md)
+- [acceptance_plan.md](acceptance_plan.md)
+- [frontend.md](frontend.md) — маршруты UI

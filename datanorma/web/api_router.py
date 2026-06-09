@@ -60,7 +60,7 @@ from datanorma.web.norm_issues import list_norm_issues_for_run, list_norm_issues
 from datanorma.web.api_v1_catalog import register_api_v1_catalog_routes
 from datanorma.web.api_elt import get_elt_workspace_id, register_elt_routes
 from datanorma.web.elt_repo import list_destinations, public_destination_payload
-from datanorma.web.sql_util import warehouse_row_count
+from datanorma.web.sql_util import warehouse_row_count, warehouse_table_sql
 from datanorma.web.workspace_repo import create_workspace
 from datanorma.web.users_repo import (
     assign_role_to_user,

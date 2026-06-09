@@ -1,4 +1,5 @@
 import { apiGetJson, apiPostJson, type ApiRequestInit } from "@/lib/api-client";
+import { filterVisibleConnectors } from "@/lib/connector-catalog";
 import type {
   AdminUserRowDto,
   AuditLogRowDto,
@@ -82,7 +83,8 @@ export async function fetchV1ConnectorsCatalog(
   init?: ApiRequestInit,
 ) {
   const q = role === "all" ? "" : `?role=${role}`;
-  return apiGetJson<{ items: Array<Record<string, unknown>> }>(`/api/v1/connectors/catalog${q}`, { ...init });
+  const body = await apiGetJson<{ items: Array<Record<string, unknown>> }>(`/api/v1/connectors/catalog${q}`, { ...init });
+  return { items: filterVisibleConnectors(body.items ?? []) };
 }
 
 export async function fetchV1ConnectorCatalogItem(code: string, init?: ApiRequestInit) {

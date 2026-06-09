@@ -5,6 +5,7 @@ import { PageHeader } from "@/components/page-header";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { fetchV1ConnectorCatalogItem } from "@/lib/api-datanorma";
+import { isHiddenConnectorCode } from "@/lib/connector-catalog";
 import type { ConnectorCatalogItem } from "@/lib/types";
 
 function mapRole(v: string): ConnectorCatalogItem["role"] {
@@ -17,6 +18,7 @@ export function ConnectorDetailPage() {
   const connectorId = params?.connectorId ?? "";
   const query = useQuery({
     queryKey: ["connector-detail", connectorId],
+    enabled: Boolean(connectorId) && !isHiddenConnectorCode(connectorId),
     queryFn: async () => {
       const body = await fetchV1ConnectorCatalogItem(connectorId);
       const item = body.item ?? {};
@@ -32,7 +34,6 @@ export function ConnectorDetailPage() {
         auth: "—",
       } satisfies ConnectorCatalogItem;
     },
-    enabled: Boolean(connectorId),
   });
   const c = query.data;
 

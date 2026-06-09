@@ -4,34 +4,63 @@
 
 Каждый source connector реализует:
 
-- `check` - проверка доступности источника и/или конфигурации;
-- `discover` - описание доступных stream и их схемы;
-- `read` - чтение данных потока (full refresh или incremental).
+- `check` — проверка доступности источника и конфигурации;
+- `discover` — описание доступных stream и их JSON-схемы;
+- `read` — чтение данных потока (`full_refresh` или `incremental`).
 
-## Текущие источники
+Реализации: `datanorma/sources/`. Регистрация: `datanorma/sources/registry.py`. Каталог в UI и API: `GET /api/v1/connectors/catalog`.
 
-- Ozon
-- 1C
-- Google Sheets
-- Яндекс Метрика
-- Wildberries
-- Bitrix24
-- amoCRM
-- МойСклад
+## Источники в продуктовом каталоге
+
+В UI (`/connectors`) и мастере создания source предлагаются коннекторы с рабочим `check` на фикстурах или тестовых стендах:
+
+| Код | Система | Layout в мастере | Потоки (примеры) |
+|-----|---------|------------------|------------------|
+| `google_sheet` | Google Sheets | **flat** | одна таблица |
+| `bitrix24` | Bitrix24 CRM | **entities** | сделки, контакты, лиды |
+| `moysklad` | МойСклад | **entities** | заказы, товары, остатки |
+| `amocrm` | amoCRM | **entities** | сделки, контакты, компании |
+| `yandex_metrika` | Яндекс Метрика | **entities** | summary, visits, hits, goals_reaches |
+| `rest_builder` | REST API (YAML) | **flat** | потоки из `connector_builder.yaml` |
+
+Фикстуры для офлайн-режима: `data/samples/` и `data/fixtures/<connector>/`.
+
+### Переменные окружения (источники)
+
+| Коннектор | Переменные | Fallback |
+|-----------|------------|----------|
+| `google_sheet` | `GSPREAD_SERVICE_ACCOUNT_FILE`, `GSPREAD_SPREADSHEET_ID`, `GSPREAD_WORKSHEET` | `data/samples/google_sheet_export.csv` |
+| `bitrix24` | `DATANORMA_BITRIX24_WEBHOOK_URL` | фикстуры в `data/fixtures/bitrix24/` |
+| `moysklad` | `DATANORMA_MOYSKLAD_TOKEN` | фикстуры в `data/fixtures/moysklad/` |
+| `amocrm` | `DATANORMA_AMOCRM_BASE_URL`, `DATANORMA_AMOCRM_TOKEN` | фикстуры в `data/fixtures/amocrm/` |
+| `yandex_metrika` | `YANDEX_METRIKA_OAUTH_TOKEN`, `YANDEX_METRIKA_COUNTER_ID` | `data/samples/yandex_metrika_*.json` |
+| `rest_builder` | YAML в config source (`yaml_body`) | — |
+
+Для Google Sheets в UI доступен OAuth: `GET /api/v1/integrations/google/oauth/start`.
+
+Подробнее по Яндекс Метрике: [`yandex_metrika_connector.md`](yandex_metrika_connector.md).
 
 ## Приёмники
 
-- PostgreSQL
-- ClickHouse
-- CSV
-- XLSX
+| Код | Назначение |
+|-----|------------|
+| `postgres` | внешняя PostgreSQL (основной сценарий) |
+| `clickhouse` | ClickHouse по HTTP |
+| `csv` | выгрузка в CSV-файл |
+| `xlsx` | выгрузка в Excel |
 
-## Архитектурное правило
+Реализации: `datanorma/destinations/`. Контракт: `check(config)` и `write(stream, records, schema, mode, config)`.
 
-Коннекторы пишут в `raw.*` слой и не должны напрямую формировать бизнес-витрины.
-Бизнес-смысл добавляется позже через `normalized.*` и dbt-модели `semantic.*`.
+## Поток данных
 
-## История требований
+Продуктовый контур — **connection sync** (`datanorma/elt/run_connection_sync.py`):
 
-В актуальном контуре веб-аналитики используется Яндекс Метрика.
-Unisender рассматривается только как историческое упоминание изменения требований.
+```
+source.read(stream) → cast_row(StreamRules) → destination.write → sync_state
+```
+
+Коннектор **не формирует бизнес-витрины**. Структурная нормализация — per-stream правила (`ColumnRule` / `StreamRules`); бизнес-смысл — в dbt-моделях слоя `semantic.*` (опционально, после загрузки в warehouse).
+
+## Добавление коннектора
+
+См. [`adding_russian_connector.md`](adding_russian_connector.md).

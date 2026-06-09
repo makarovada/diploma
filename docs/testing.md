@@ -2,8 +2,12 @@
 
 ## Основные проверки
 
-- Backend tests: `pytest tests/ -q`
-- Frontend build: `npm run build` в `client/`
+| Слой | Команда |
+|------|---------|
+| Backend | `pytest tests/ -q` |
+| Frontend unit | `npm run test` в `client/` (Vitest) |
+| Frontend e2e | `npm run test:e2e` в `client/` (Playwright) |
+| Frontend build | `npm run build` в `client/` |
 
 ## Отчёты Allure (графики и история прогонов)
 
@@ -149,27 +153,26 @@ $env:LOAD_TEST_DURATION = "3m"
 
 ## Что проверяется
 
-- API и RBAC-ограничения.
-- Коннекторы и чтение потоков.
-- Нормализация и обработка issues.
-- Pipeline stages и post-load dbt run.
+- API и RBAC (workspace permissions, resource grants).
+- Коннекторы: `bitrix24`, `amocrm`, `moysklad`, `yandex_metrika`, `google_sheet`, `rest_builder`.
+- `ColumnRule` / `StreamRules`, `cast_row`, normalization issues.
+- ELT connection sync, sync runs, cron scheduler.
+- dbt models API.
 
-## Smoke для фазы 14
+## Smoke (основной контур)
 
-1. Войти в UI под demo-пользователями.
-2. Проверить создание source/destination/connection.
-3. Запустить sync и открыть run history.
-4. Проверить страницу `semantic-layer` и наличие dbt-источников данных.
+1. Войти в UI под demo-пользователями (`seed_integrator` / `IntegratorDemo2026`).
+2. Создать source (например `yandex_metrika` или `google_sheet`).
+3. Создать destination (`postgres` с `url`, `schema`, `table`).
+4. Пройти мастер connection: discover → колонки и типы → сохранить.
+5. Запустить sync (`Запустить`) и проверить `/runs` (логи, статус).
+6. При ошибках нормализации — `/issues`.
 
 ## Smoke: Яндекс Метрика → PostgreSQL + cron
 
-1. В UI открыть `Источники` → `Новый источник`.
-2. Выбрать `yandex_metrika`, сохранить источник с JSON-конфигом:
-   - `oauth_token`
-   - `counter_id`
-3. В UI открыть `Приёмники` → `Новый приёмник`, выбрать `postgres`, задать `url`, `schema`, `table`.
-4. В мастере подключения связать созданные source/destination и сохранить connection.
-5. В `Настройки подключения` задать cron `*/5 * * * *` и timezone (например `Europe/Moscow`), сохранить.
-6. Проверить ручной запуск с карточки подключения (`Запустить`) и появление записи в run history.
-7. Убедиться, что в окружении Dagster включён sensor `connection_cron_sensor` (иначе расписание не исполняется).
-
+1. UI → `Источники` → `Новый источник` → `yandex_metrika` (config: `oauth_token`, `counter_id` или фикстуры).
+2. UI → `Приёмники` → `postgres` (`url`, `schema`, `table`).
+3. Мастер подключения: связать source/destination, настроить колонки.
+4. `Настройки подключения`: cron `*/5 * * * *`, timezone `Europe/Moscow`.
+5. Ручной запуск с карточки подключения.
+6. Убедиться, что FastAPI scheduler активен (`DATANORMA_CONNECTION_SCHEDULER` не равен `0`; по умолчанию включён в `datanorma/web/connection_scheduler.py`).

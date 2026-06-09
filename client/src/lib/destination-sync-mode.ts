@@ -1,4 +1,4 @@
-/** Режимы репликации (парные, как в Airbyte / CDK). */
+/** Режимы репликации: парные sync_mode и destination_sync_mode. */
 
 export type DestinationSyncMode =
   | "refresh_overwrite"
@@ -53,7 +53,7 @@ export const REPLICATION_PRESETS: ReplicationPreset[] = [
   {
     id: "incremental_dedup",
     label: "Инкремент — дедупликация",
-    hint: "Инкремент по курсору + upsert по первичному ключу (как Deduped History в Airbyte).",
+    hint: "Инкремент по курсору и upsert по первичному ключу: существующие строки обновляются, новые добавляются.",
     sync_mode: "incremental",
     destination_sync_mode: "append_dedup",
     needsCursor: true,
