@@ -6,14 +6,9 @@ from typing import Any, Literal
 
 SchemaLayout = Literal["flat", "entities"]
 
-_FLAT_CONNECTORS: frozenset[str] = frozenset({"google_sheet", "ozon", "1c", "onec"})
+_FLAT_CONNECTORS: frozenset[str] = frozenset({"google_sheet"})
 
 _ENTITY_LABELS: dict[str, dict[str, str]] = {
-    "wildberries": {
-        "orders": "Заказы",
-        "sales": "Продажи",
-        "stocks": "Остатки",
-    },
     "yandex_metrika": {
         "summary": "Сводка",
         "visits": "Визиты",
@@ -64,11 +59,7 @@ def connector_stream_defaults(code: str) -> list[dict[str, Any]]:
     """Дефолты sync_mode / cursor_field / destination_sync_mode per internal stream_name."""
     c = _code_snake(code)
     raw: list[dict[str, Any]] = []
-    if c == "ozon":
-        raw = [{"stream_name": "postings", "sync_mode": "incremental", "cursor_field": "posting_number"}]
-    elif c in ("1c", "onec"):
-        raw = [{"stream_name": "orders", "sync_mode": "full_refresh", "cursor_field": None}]
-    elif c == "google_sheet":
+    if c == "google_sheet":
         raw = [
             {
                 "stream_name": "orders",
@@ -84,12 +75,6 @@ def connector_stream_defaults(code: str) -> list[dict[str, Any]]:
             {"stream_name": "visits", "sync_mode": "incremental", "cursor_field": "date_time"},
             {"stream_name": "hits", "sync_mode": "incremental", "cursor_field": "date_time"},
             {"stream_name": "goals_reaches", "sync_mode": "incremental", "cursor_field": "reach_datetime"},
-        ]
-    elif c == "wildberries":
-        raw = [
-            {"stream_name": "orders", "sync_mode": "incremental", "cursor_field": "lastChangeDate"},
-            {"stream_name": "sales", "sync_mode": "incremental", "cursor_field": "lastChangeDate"},
-            {"stream_name": "stocks", "sync_mode": "incremental", "cursor_field": "lastChangeDate"},
         ]
     elif c == "bitrix24":
         raw = [

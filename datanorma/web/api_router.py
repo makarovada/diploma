@@ -45,7 +45,7 @@ from datanorma.web.deps import WorkspacePrincipal, get_workspace_principal
 from datanorma.web.permission_service import effective_permissions_for_user
 from datanorma.web.api_workspaces import register_workspace_routes
 from datanorma.web.api_resource_grants import register_resource_grant_routes
-from datanorma.web.sync_launch import build_sync_audit_payload, launch_sync_run_via_dagster, run_sync_inline_for_connection
+from datanorma.web.sync_launch import build_sync_audit_payload, launch_sync_run_via_dagster, only_stream_from_run_name, run_sync_inline_for_connection
 from datanorma.web.sync_runs import (
     SyncRunError,
     attach_load_destination,
@@ -54,6 +54,7 @@ from datanorma.web.sync_runs import (
     mark_sync_run_failed,
     refresh_recent_sync_runs,
     refresh_sync_run_status,
+    request_sync_run_cancel,
     resolve_connection,
 )
 from datanorma.web.norm_issues import list_norm_issues_for_run, list_norm_issues_for_workspace
@@ -501,14 +502,15 @@ def data_staging_counts(
     _: Annotated[AuthUser, Depends(require_operation("view_staging_counts"))],
     conn: Annotated[Connection, Depends(get_conn)],
 ) -> dict[str, Any]:
-    oz = int(conn.execute(text("SELECT COUNT(*) FROM raw_ozon_postings_staging")).scalar_one())
-    c1 = int(conn.execute(text("SELECT COUNT(*) FROM raw_1c_orders_staging")).scalar_one())
-    sh = int(conn.execute(text("SELECT COUNT(*) FROM raw_google_sheet_orders_staging")).scalar_one())
-    return {
-        "raw_ozon_postings_staging": oz,
-        "raw_1c_orders_staging": c1,
-        "raw_google_sheet_orders_staging": sh,
-    }
+    from datanorma.ingest.dagster_streams import dagster_staging_table_names
+
+    out: dict[str, int] = {}
+    for table in dagster_staging_table_names():
+        try:
+            out[table] = int(conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar_one())
+        except Exception:
+            out[table] = 0
+    return out
 
 
 @router.get("/data/destinations-catalog")
@@ -569,40 +571,6 @@ def data_destinations_catalog(
         )
 
     return {"items": items, "warehouse_row_count": n_rows}
-
-
-@router.get("/data/staging-ozon-sample")
-def data_staging_ozon(
-    _: Annotated[AuthUser, Depends(require_operation("view_staging_ozon_sample"))],
-    conn: Annotated[Connection, Depends(get_conn)],
-    limit: int = 5,
-) -> dict[str, Any]:
-    lim = max(1, min(limit, 50))
-    rows = conn.execute(
-        text(
-            "SELECT id, ingest_batch_id, ingested_at, _ingest_extracted_at, _ingest_meta, payload_json "
-            "FROM raw_ozon_postings_staging ORDER BY id DESC LIMIT :lim"
-        ),
-        {"lim": lim},
-    ).mappings().all()
-    return {"rows": [dict(r) for r in rows]}
-
-
-@router.get("/data/staging-1c-sample")
-def data_staging_1c(
-    _: Annotated[AuthUser, Depends(require_operation("view_staging_1c_sample"))],
-    conn: Annotated[Connection, Depends(get_conn)],
-    limit: int = 5,
-) -> dict[str, Any]:
-    lim = max(1, min(limit, 50))
-    rows = conn.execute(
-        text(
-            "SELECT id, ingest_batch_id, ingested_at, _ingest_extracted_at, _ingest_meta, row_json "
-            "FROM raw_1c_orders_staging ORDER BY id DESC LIMIT :lim"
-        ),
-        {"lim": lim},
-    ).mappings().all()
-    return {"rows": [dict(r) for r in rows]}
 
 
 @router.get("/data/staging-sheet-sample")
@@ -1206,6 +1174,7 @@ def v1_sync_trigger(
                 run_id=run_id,
                 workspace_id=workspace_id,
                 domain_connection_id=int(domain_cid),
+                only_stream_name=only_stream_from_run_name(stream_name),
             )
         except Exception as exc:
             row = mark_sync_run_failed(conn, run_id=run_id, message=str(exc))
@@ -1418,6 +1387,43 @@ def v1_sync_issues(
     return {"items": items}
 
 
+@v1.post("/syncs/{run_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+def v1_sync_cancel(
+    run_id: int,
+    request: Request,
+    user: Annotated[AuthUser, Depends(require_operation("manage_syncs_api"))],
+    conn: Annotated[Connection, Depends(get_conn)],
+    workspace_id: Annotated[int, Depends(require_request_workspace_id)],
+) -> dict[str, Any]:
+    run = get_sync_run(conn, run_id, workspace_id=workspace_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail={"error_code": "sync_run_not_found"})
+    if str(run.get("status", "")).lower() not in {"queued", "running"}:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_code": "sync_run_not_cancellable", "message": "Запуск не выполняется"},
+        )
+    try:
+        row = request_sync_run_cancel(conn, run_id)
+    except SyncRunError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"error_code": "sync_run_not_cancellable", "message": str(exc)},
+        ) from exc
+    _audit_api(
+        conn,
+        request,
+        user,
+        workspace_id=workspace_id,
+        action="cancel_sync",
+        resource_type="sync_run",
+        resource_id=str(run_id),
+        result="success",
+        payload={"execution_mode": "cancel_requested"},
+    )
+    return {"status": row.get("status"), "run_id": run_id, "item": row}
+
+
 @v1.post("/syncs/{run_id}/retry", status_code=status.HTTP_202_ACCEPTED)
 def v1_sync_retry(
     run_id: int,
@@ -1449,6 +1455,7 @@ def v1_sync_retry(
                 workspace_id=workspace_id,
                 domain_connection_id=int(domain_cid),
                 extra_meta={"retry_of": run_id},
+                only_stream_name=only_stream_from_run_name(old.get("stream_name")),
             )
         except Exception as exc:
             row = mark_sync_run_failed(conn, run_id=new_id, message=str(exc))

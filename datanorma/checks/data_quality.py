@@ -11,14 +11,11 @@ from datanorma.assets.warehouse import warehouse_sales
 
 @dg.asset_check(
     asset=staging_raw_postgres,
-    description="В staging записан хотя бы один сырой объект (Ozon/1С/лист).",
+    description="В staging записан хотя бы один сырой объект (Google Sheets / Bitrix24).",
 )
 def staging_raw_has_rows(staging_raw_postgres: dict) -> dg.AssetCheckResult:
-    n = (
-        int(staging_raw_postgres.get("ozon_rows_written") or 0)
-        + int(staging_raw_postgres.get("onec_rows_written") or 0)
-        + int(staging_raw_postgres.get("sheet_rows_written") or 0)
-    )
+    rows_written = staging_raw_postgres.get("rows_written") or {}
+    n = int(staging_raw_postgres.get("sheet_rows_written") or sum(int(v) for v in rows_written.values()))
     return dg.AssetCheckResult(
         passed=n > 0,
         metadata={"staging_rows_total": dg.MetadataValue.int(n)},

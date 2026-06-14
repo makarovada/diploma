@@ -24,7 +24,8 @@ from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import SOURCE_KINDS, create_source
 from datanorma.sources.schema_inference import records_to_json_schema
 from datanorma.web.deps import WorkspacePrincipal, get_conn, get_workspace_principal, require_permission, require_request_workspace_id
-from datanorma.web.permission_catalog import PERM_CONNECTION_READ, PERM_CONNECTION_UPDATE, PERM_MAPPING_READ
+from datanorma.sources.builder import probe_rest_builder_stream, rest_builder_config_from_source
+from datanorma.web.permission_catalog import PERM_CONNECTION_READ, PERM_CONNECTION_UPDATE, PERM_MAPPING_READ, PERM_SOURCE_READ
 from datanorma.web.elt_repo import get_source, list_connection_schedules, public_source_payload
 from datanorma.web.permission_service import filter_rows_by_visibility
 from datanorma.schedules.connection_cron_runner import next_scheduled_run_utc
@@ -48,29 +49,6 @@ def _code_snake(code: str) -> str:
 def _connector_config_schema(code: str) -> dict[str, Any]:
     """Подстановка минимальной config_schema для мастера подключения."""
     c = _code_snake(code)
-    # Источник: ozon
-    if c == "ozon":
-        return {
-            "type": "object",
-            "required": ["client_id", "api_key"],
-            "properties": {
-                "client_id": {"type": "string", "title": "Client-Id", "x-format": "secret"},
-                "api_key": {"type": "string", "title": "API Key", "x-format": "secret"},
-                "fetch_limit": {"type": "integer", "title": "Лимит выборки", "default": 500, "minimum": 1, "maximum": 1000},
-            },
-        }
-    if c == "1c" or c == "onec":
-        return {
-            "type": "object",
-            "required": ["export_path"],
-            "properties": {
-                "export_path": {
-                    "type": "string",
-                    "title": "Путь к файлу выгрузки",
-                    "description": "CSV или XLSX на машине, где работает DataNorma. В Docker укажите путь внутри контейнера и смонтируйте каталог с хоста.",
-                },
-            },
-        }
     if c == "google_sheet":
         return {
             "type": "object",
@@ -130,15 +108,6 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
                 },
                 "date_from": {"type": "string", "title": "date1 (YYYY-MM-DD), опционально", "description": "Переопределяет lookback_days."},
                 "date_to": {"type": "string", "title": "date2 (YYYY-MM-DD), опционально"},
-            },
-        }
-    if c == "wildberries":
-        return {
-            "type": "object",
-            "required": ["api_token"],
-            "properties": {
-                "api_token": {"type": "string", "title": "WB token", "x-format": "secret"},
-                "lookback_days": {"type": "integer", "title": "Глубина первого запроса (дней)", "default": 30, "minimum": 1, "maximum": 365},
             },
         }
     if c == "bitrix24":
@@ -210,7 +179,84 @@ def _connector_config_schema(code: str) -> dict[str, Any]:
     if c in ("csv", "xlsx", "clickhouse"):
         return {"type": "object", "properties": {}, "required": []}
 
-    # rest_builder: в UI прячем YAML, поэтому просто объект-обертка.
+    if c == "rest_builder":
+        return {
+            "type": "object",
+            "required": ["base_url"],
+            "properties": {
+                "base_url": {
+                    "type": "string",
+                    "title": "Base URL",
+                    "description": "Базовый URL REST API, например https://api.example.com",
+                },
+                "auth_type": {
+                    "type": "string",
+                    "title": "Авторизация",
+                    "enum": ["none", "bearer", "api_key_header"],
+                    "default": "none",
+                },
+                "auth_token": {
+                    "type": "string",
+                    "title": "Token / API key",
+                    "x-format": "secret",
+                },
+                "auth_header_name": {
+                    "type": "string",
+                    "title": "HTTP заголовок",
+                    "default": "Authorization",
+                },
+                "token_prefix": {
+                    "type": "string",
+                    "title": "Префикс Bearer",
+                    "default": "Bearer ",
+                },
+                "openapi_url": {
+                    "type": "string",
+                    "title": "OpenAPI URL",
+                    "description": "Опционально: URL OpenAPI/Swagger для обогащения схемы.",
+                },
+                "timeout_seconds": {
+                    "type": "number",
+                    "title": "Таймаут (с)",
+                    "default": 60,
+                    "minimum": 1,
+                    "maximum": 300,
+                },
+                "streams": {
+                    "type": "array",
+                    "title": "Endpoints",
+                    "items": {
+                        "type": "object",
+                        "required": ["name", "path"],
+                        "properties": {
+                            "name": {"type": "string", "title": "Имя потока"},
+                            "path": {"type": "string", "title": "Path", "description": "/posts"},
+                            "method": {"type": "string", "enum": ["GET", "POST"], "default": "GET"},
+                            "records_json_path": {
+                                "type": "string",
+                                "title": "JSON path до массива записей",
+                                "description": "Например data.items; пусто — автоопределение",
+                            },
+                            "pagination_type": {
+                                "type": "string",
+                                "enum": ["none", "offset"],
+                                "default": "none",
+                            },
+                            "limit_param": {"type": "string", "default": "limit"},
+                            "offset_param": {"type": "string", "default": "offset"},
+                            "limit": {"type": "integer", "default": 50, "minimum": 1, "maximum": 5000},
+                            "max_pages": {"type": "integer", "default": 20, "minimum": 1, "maximum": 500},
+                        },
+                    },
+                },
+                "yaml_body": {
+                    "type": "string",
+                    "title": "YAML (альтернатива structured config)",
+                    "description": "Connector Builder YAML; если задан, имеет приоритет над полями формы.",
+                },
+            },
+        }
+
     return {"type": "object", "properties": {}}
 
 
@@ -251,6 +297,11 @@ class IssueQuery(BaseModel):
 class PreviewRulesBody(BaseModel):
     source_id: int
     stream_name: str
+
+
+class RestBuilderProbeBody(BaseModel):
+    config: dict[str, Any] = Field(default_factory=dict)
+    stream_index: int = Field(default=0, ge=0, le=99)
 
 
 def _serialize_stream_rules(rules: StreamRules) -> dict[str, Any]:
@@ -319,6 +370,25 @@ def register_api_v1_catalog_routes(v1: APIRouter) -> None:
         category = "source" if c in SOURCE_KINDS else "destination"
         item = _as_connector_item(c, category=category)
         return {"item": item}
+
+    @v1.post("/connectors/rest-builder/probe")
+    def rest_builder_probe(
+        body: RestBuilderProbeBody,
+        _: WorkspacePrincipal = Depends(require_permission(PERM_SOURCE_READ)),
+    ) -> dict[str, Any]:
+        cfg_dict = body.config if isinstance(body.config, dict) else {}
+        yaml_text = cfg_dict.get("yaml_body") or cfg_dict.get("connector_builder_yaml")
+        try:
+            rb_cfg = rest_builder_config_from_source(
+                cfg_dict,
+                str(yaml_text) if yaml_text else None,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"error_code": "config_invalid", "message": str(exc)},
+            ) from exc
+        return probe_rest_builder_stream(rb_cfg, stream_index=body.stream_index)
 
     @v1.get("/dictionaries")
     def dictionaries_list(

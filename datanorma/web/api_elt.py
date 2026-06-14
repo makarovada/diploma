@@ -7,11 +7,13 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.engine import Connection
+from sqlalchemy.exc import IntegrityError
 
 from datanorma.destinations.base import WriteMode
 from datanorma.destinations.registry import destination_check, destination_write
 from datanorma.resources.paths import DataPathsResource
 from datanorma.sources.registry import create_source
+from datanorma.sources.builder import rest_builder_config_valid
 from datanorma.web.audit_repo import record_audit_event
 from datanorma.web.deps import (
     WorkspacePrincipal,
@@ -201,6 +203,10 @@ class ConnectionPatchBody(BaseModel):
     wizard_meta: dict[str, Any] | None = None
 
 
+class ConnectionTriggerBody(BaseModel):
+    stream_name: str | None = Field(default=None, max_length=128)
+
+
 def register_elt_routes(v1: APIRouter) -> None:
     @v1.get("/sources")
     def elt_sources_list(
@@ -343,10 +349,13 @@ def register_elt_routes(v1: APIRouter) -> None:
         cc = str(row["connector_code"]).strip().lower().replace("-", "_")
         paths = DataPathsResource()
         yaml_text = cfg.get("yaml_body") or cfg.get("connector_builder_yaml")
-        if cc == "rest_builder" and not (yaml_text and str(yaml_text).strip()):
+        if cc == "rest_builder" and not rest_builder_config_valid(cfg, str(yaml_text) if yaml_text else None):
             raise HTTPException(
                 status_code=422,
-                detail={"error_code": "config_invalid", "message": "Для rest_builder нужен config.yaml_body"},
+                detail={
+                    "error_code": "config_invalid",
+                    "message": "Для rest_builder нужен yaml_body или structured config (base_url + streams)",
+                },
             )
         try:
             src = create_source(
@@ -376,10 +385,13 @@ def register_elt_routes(v1: APIRouter) -> None:
         cc = str(row["connector_code"]).strip().lower().replace("-", "_")
         paths = DataPathsResource()
         yaml_text = cfg.get("yaml_body") or cfg.get("connector_builder_yaml")
-        if cc == "rest_builder" and not (yaml_text and str(yaml_text).strip()):
+        if cc == "rest_builder" and not rest_builder_config_valid(cfg, str(yaml_text) if yaml_text else None):
             raise HTTPException(
                 status_code=422,
-                detail={"error_code": "config_invalid", "message": "Для rest_builder нужен config.yaml_body"},
+                detail={
+                    "error_code": "config_invalid",
+                    "message": "Для rest_builder нужен yaml_body или structured config (base_url + streams)",
+                },
             )
         try:
             src = create_source(
@@ -709,7 +721,17 @@ def register_elt_routes(v1: APIRouter) -> None:
         workspace_code: str = "main",
     ) -> Response:
         wid = principal.workspace_id
-        if not delete_connection_row(conn, workspace_id=wid, connection_id=connection_id):
+        try:
+            deleted = delete_connection_row(conn, workspace_id=wid, connection_id=connection_id)
+        except IntegrityError as e:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "error_code": "connection_delete_conflict",
+                    "message": "Не удалось удалить подключение: конфликт состояния синхронизации. Перезапустите backend и выполните alembic upgrade head.",
+                },
+            ) from e
+        if not deleted:
             raise HTTPException(status_code=404, detail={"error_code": "connection_not_found"})
         _audit_elt(
             conn,
@@ -729,6 +751,7 @@ def register_elt_routes(v1: APIRouter) -> None:
         principal: Annotated[WorkspacePrincipal, Depends(require_permission(PERM_CONNECTION_SYNC_RUN, resource_type="connection"))],
         conn: Annotated[Connection, Depends(get_conn)],
         workspace_code: str = "main",
+        body: ConnectionTriggerBody | None = None,
     ) -> dict[str, Any]:
         wid = principal.workspace_id
         crow = conn.execute(
@@ -744,12 +767,18 @@ def register_elt_routes(v1: APIRouter) -> None:
             raise HTTPException(status_code=404, detail={"error_code": "source_not_found"})
         integration_code = str(src_row["connector_code"]).strip()
 
+        only_stream: str | None = None
+        run_stream_name = "*"
+        if body and body.stream_name and body.stream_name.strip():
+            only_stream = body.stream_name.strip()
+            run_stream_name = only_stream
+
         row = create_sync_run(
             conn,
             connection_id=None,
             domain_connection_id=connection_id,
             integration_code=integration_code,
-            stream_name="*",
+            stream_name=run_stream_name,
             triggered_by=principal.user.username,
             note=None,
             workspace_id=wid,
@@ -761,6 +790,7 @@ def register_elt_routes(v1: APIRouter) -> None:
                 run_id=run_id,
                 workspace_id=wid,
                 domain_connection_id=connection_id,
+                only_stream_name=only_stream,
             )
         except Exception as inline_exc:
             try:

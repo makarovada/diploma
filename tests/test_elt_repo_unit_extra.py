@@ -46,7 +46,7 @@ _CONN_LIST_ROW = {
     "wizard_meta": None,
     "stream_count": 1,
     "source_name": "S",
-    "source_connector_code": "ozon",
+    "source_connector_code": "google_sheet",
     "destination_name": "D",
     "destination_connector_code": "postgres",
 }
@@ -90,7 +90,7 @@ def test_list_get_and_delete_helpers() -> None:
 
 def test_create_connection_row_and_sync_state(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = MagicMock()
-    monkeypatch.setattr(repo, "get_source", lambda *_a, **_k: {"id": 1, "connector_code": "ozon"})
+    monkeypatch.setattr(repo, "get_source", lambda *_a, **_k: {"id": 1, "connector_code": "google_sheet"})
     monkeypatch.setattr(repo, "get_destination", lambda *_a, **_k: {"id": 2, "connector_code": "postgres"})
     monkeypatch.setattr(repo, "get_connection", lambda *_a, **_k: {"id": 10, "streams": [{"stream_name": "orders"}]})
     monkeypatch.setattr(repo, "ensure_sync_state_for_stream", lambda *_a, **_k: None)
@@ -154,7 +154,12 @@ def test_destinations_connections_and_touch_helpers(monkeypatch: pytest.MonkeyPa
         _Rows([]),
         _Rows([_CONN_GET_ROW]),
         _Rows([_STREAM_ROW]),
-        _Rows([{"id": 11}]),
+        _Rows([]),  # delete_connection_row: normalization_issue
+        _Rows([]),  # delete_connection_row: sync_state
+        _Rows([]),  # delete_connection_row: connection_stream
+        _Rows([]),  # delete_connection_row: normalized_table_meta
+        _Rows([]),  # delete_connection_row: resource_grant
+        _Rows([{"id": 11}]),  # delete_connection_row: connection
     ]
     assert repo.list_connections(conn2, workspace_id=1)[0]["id"] == 11
     assert repo.get_connection(conn2, workspace_id=1, connection_id=11)["streams"][0]["stream_name"] == "orders"
@@ -170,7 +175,7 @@ def test_destinations_connections_and_touch_helpers(monkeypatch: pytest.MonkeyPa
     ]
     repo.ensure_sync_state_for_stream(
         conn3,
-        integration_code="ozon",
+        integration_code="google_sheet",
         stream_name="orders",
         sync_mode="incremental",
         cursor_field="updated_at",
@@ -226,7 +231,7 @@ def test_update_connection_streams_config_unknown_stream(monkeypatch: pytest.Mon
         "get_connection",
         lambda *_a, **_k: {**_CONN_GET_ROW, "streams": [_STREAM_ROW]},
     )
-    monkeypatch.setattr(repo, "get_source", lambda *_a, **_k: {"id": 1, "connector_code": "ozon"})
+    monkeypatch.setattr(repo, "get_source", lambda *_a, **_k: {"id": 1, "connector_code": "google_sheet"})
     with pytest.raises(repo.EltRepoError, match="stream not found"):
         repo.update_connection_streams_config(
             conn,

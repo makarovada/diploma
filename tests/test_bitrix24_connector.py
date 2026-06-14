@@ -55,6 +55,14 @@ def test_check_mock(tmp_path) -> None:
     assert res.ok is True
 
 
+def test_read_fixture_without_webhook(tmp_path) -> None:
+    paths = DataPathsResource(repo_root=str(tmp_path))
+    src = create_source("bitrix24", paths=paths, source_config={})
+    rows = list(src.read("crm_deals"))
+    assert len(rows) >= 1
+    assert src.last_ingest_mode == "fixture_json"
+
+
 def test_discover_sample_mock(tmp_path) -> None:
     paths = DataPathsResource(repo_root=str(tmp_path))
 

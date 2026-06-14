@@ -17,7 +17,7 @@ def test_add_column_allowed():
         ],
     )
     validate_stream_rules_compatible(old_rules, new_rules)
-    table = ensure_normalized_table(connector_code="ozon", stream_rules=new_rules)
+    table = ensure_normalized_table(connector_code="google_sheet", stream_rules=new_rules)
     assert "name" in table.c
 
 

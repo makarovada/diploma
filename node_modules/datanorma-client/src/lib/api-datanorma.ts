@@ -14,6 +14,7 @@ import type {
   V1SyncRunItem,
   WorkspaceItemDto,
 } from "@/lib/api-types";
+import { enrichIssue } from "@/lib/issue-explanations";
 import { describeCronExpression } from "@/lib/schedule-config";
 import type { Connection, Destination, Issue, Run, Status } from "@/lib/types";
 
@@ -57,6 +58,14 @@ export function retryV1Sync(runId: number, init?: ApiRequestInit) {
   return apiPostJson<{ status: string; run_id: number }>(`/api/v1/syncs/${runId}/retry`, {}, { ...init });
 }
 
+export function cancelV1Sync(runId: number, init?: ApiRequestInit) {
+  return apiPostJson<{ status: string; run_id: number; item?: V1SyncRunItem }>(
+    `/api/v1/syncs/${runId}/cancel`,
+    {},
+    { ...init },
+  );
+}
+
 export function resolveIssue(issueId: number, note = "", init?: ApiRequestInit) {
   return apiPostJson<{ item: { id: number; status: string } }>(`/api/v1/issues/${issueId}/resolve`, { note }, { ...init });
 }
@@ -89,6 +98,23 @@ export async function fetchV1ConnectorsCatalog(
 
 export async function fetchV1ConnectorCatalogItem(code: string, init?: ApiRequestInit) {
   return apiGetJson<{ item: Record<string, unknown> }>(`/api/v1/connectors/catalog/${encodeURIComponent(code)}`, { ...init });
+}
+
+export async function probeRestBuilder(
+  config: Record<string, unknown>,
+  streamIndex = 0,
+  init?: ApiRequestInit,
+) {
+  return apiPostJson<{
+    ok: boolean;
+    status_code: number | null;
+    message: string;
+    sample_records: Record<string, unknown>[];
+    record_count: number;
+    schema_hint?: Record<string, unknown>;
+    stream?: string;
+    url?: string;
+  }>("/api/v1/connectors/rest-builder/probe", { config, stream_index: streamIndex }, { ...init });
 }
 
 export function fetchDimSources(init?: ApiRequestInit) {
@@ -209,7 +235,7 @@ function mapNormSeverity(issueType: string): Issue["severity"] {
 export function mapNormRowToIssue(row: NormIssueRowDto): Issue {
   const issueType = row.issue_type || row.error_code || "cast_error";
   const msg = row.message ?? row.error_text ?? "—";
-  return {
+  const base: Issue = {
     id: String(row.id),
     severity: mapNormSeverity(issueType),
     type: issueType,
@@ -220,6 +246,11 @@ export function mapNormRowToIssue(row: NormIssueRowDto): Issue {
     suggested: row.source_record_id ? `record:${row.source_record_id}` : "—",
     status: row.status ?? "open",
   };
+  return enrichIssue(base, row);
+}
+
+export function filterIssuesByConnectionId(rows: NormIssueRowDto[], connectionId: number): NormIssueRowDto[] {
+  return rows.filter((r) => r.connection_id === connectionId);
 }
 
 export function formatTs(iso: string | null | undefined): string {

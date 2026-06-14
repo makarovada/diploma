@@ -70,8 +70,6 @@ omit = [
     "datanorma/normalization/typing.py",
     "datanorma/normalization/units.py",
     "datanorma/schedules/alerts.py",
-    "datanorma/sources/onec.py",
-    "datanorma/sources/ozon.py",
     "datanorma/sources/sheets.py",
     "datanorma/warehouse/load.py",
     "datanorma/warehouse/sync_state_repo.py",

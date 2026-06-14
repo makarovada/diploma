@@ -33,7 +33,7 @@ def test_mapping_profiles_draft_save(monkeypatch) -> None:
         )
         payload = {
             "workspace_code": "main",
-            "source_type": "1c",
+            "source_type": "google_sheet",
             "stream_name": "orders",
             "profile_name": "default",
             "rules_json": {"handler": "column_map", "stream": "orders", "fields": {"Номер": "source_record_id"}},

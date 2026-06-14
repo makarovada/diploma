@@ -28,14 +28,14 @@ def _client() -> TestClient:
 
 def test_trigger_sync_launch_success(monkeypatch) -> None:
     with _client() as client:
-        monkeypatch.setattr(api_mod, "resolve_connection", lambda *_a, **_k: (1, None, "ozon", "postings"))
+        monkeypatch.setattr(api_mod, "resolve_connection", lambda *_a, **_k: (1, None, "google_sheet", "postings"))
         monkeypatch.setattr(
             api_mod,
             "create_sync_run",
             lambda *_a, **_k: {
                 "id": 77,
                 "status": "queued",
-                "integration_code": "ozon",
+                "integration_code": "google_sheet",
                 "stream_name": "postings",
             },
         )
@@ -59,7 +59,7 @@ def test_trigger_sync_launch_success(monkeypatch) -> None:
 
 def test_trigger_sync_launch_failed(monkeypatch) -> None:
     with _client() as client:
-        monkeypatch.setattr(api_mod, "resolve_connection", lambda *_a, **_k: (1, None, "ozon", "postings"))
+        monkeypatch.setattr(api_mod, "resolve_connection", lambda *_a, **_k: (1, None, "google_sheet", "postings"))
         monkeypatch.setattr(api_mod, "create_sync_run", lambda *_a, **_k: {"id": 12})
         monkeypatch.setattr(
             api_mod,

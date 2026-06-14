@@ -18,7 +18,7 @@ export function StepName({ name, description, onChange, nameError }: Props) {
         className="mt-1 max-w-lg"
         value={name}
         onChange={(e) => onChange({ connectionName: e.target.value })}
-        placeholder="Например: Ozon → склад"
+        placeholder="Например: Google Sheets → склад"
         data-testid="input-connection-name"
         aria-invalid={Boolean(nameError)}
       />

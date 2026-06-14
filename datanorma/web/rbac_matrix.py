@@ -17,8 +17,6 @@ OPERATION_ROLES: dict[str, tuple[str, ...]] = {
     "export_sales_csv": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
     # Staging / сырой слой
     "view_staging_counts": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR, ROLE_ANALYST),
-    "view_staging_ozon_sample": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
-    "view_staging_1c_sample": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     "view_staging_sheet_sample": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
     # Операции и состояние интеграций
     "view_sync_state": (ROLE_PLATFORM_ADMIN, ROLE_DATA_INTEGRATOR),
@@ -64,8 +62,6 @@ OPERATION_LABELS_RU: dict[str, str] = {
     "view_sales_rows": "Выборка строк витрины",
     "export_sales_csv": "Выгрузка витрины (CSV)",
     "view_staging_counts": "Счётчики записей в raw_*_staging",
-    "view_staging_ozon_sample": "Просмотр образца raw Ozon",
-    "view_staging_1c_sample": "Просмотр образца raw 1С",
     "view_staging_sheet_sample": "Просмотр образца raw Sheets",
     "view_sync_state": "Состояние sync_state (курсоры)",
     "view_normalization_issues": "События normalization_issue",

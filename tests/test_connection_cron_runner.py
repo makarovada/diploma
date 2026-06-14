@@ -23,7 +23,7 @@ def test_run_scheduled_sync_runs_inline(monkeypatch: pytest.MonkeyPatch) -> None
         conn,
         workspace_id=1,
         domain_connection_id=7,
-        integration_code="ozon",
+        integration_code="google_sheet",
         slot_key="2026-06-02T12:00:00+00:00|UTC",
     )
 
@@ -46,7 +46,7 @@ def test_run_scheduled_sync_marks_failed_on_error(monkeypatch: pytest.MonkeyPatc
             conn,
             workspace_id=1,
             domain_connection_id=7,
-            integration_code="ozon",
+            integration_code="google_sheet",
             slot_key="2026-06-02T12:01:00+00:00|UTC",
         )
 

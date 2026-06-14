@@ -676,6 +676,36 @@ def update_connection_row(
 
 
 def delete_connection_row(conn: Connection, *, workspace_id: int, connection_id: int) -> bool:
+    # sync_state.connection_stream_id → SET NULL при CASCADE удалении stream'ов
+    # нарушает uq_sync_state_integration_stream_legacy, если legacy-строка уже есть.
+    # Явно удаляем зависимости до DELETE connection (миграция 018 переводит FK на CASCADE).
+    conn.execute(
+        text("DELETE FROM normalization_issue WHERE connection_id = :cid"),
+        {"cid": connection_id},
+    )
+    conn.execute(
+        text(
+            "DELETE FROM sync_state WHERE connection_stream_id IN ("
+            "SELECT cs.id FROM connection_stream cs "
+            "WHERE cs.connection_id = :cid)"
+        ),
+        {"cid": connection_id},
+    )
+    conn.execute(
+        text("DELETE FROM connection_stream WHERE connection_id = :cid"),
+        {"cid": connection_id},
+    )
+    conn.execute(
+        text("DELETE FROM normalized_table_meta WHERE connection_id = :cid"),
+        {"cid": connection_id},
+    )
+    conn.execute(
+        text(
+            "DELETE FROM resource_grant "
+            "WHERE workspace_id = :wid AND resource_type = 'connection' AND resource_id = :cid"
+        ),
+        {"wid": workspace_id, "cid": connection_id},
+    )
     r = conn.execute(
         text("DELETE FROM connection WHERE id = :id AND workspace_id = :wid RETURNING id"),
         {"id": connection_id, "wid": workspace_id},

@@ -13,6 +13,13 @@ import {
   emptyGoogleSheetsConfig,
   validateGoogleSheetsConfig,
 } from "@/components/google-sheets-source-form";
+import {
+  RestBuilderSourceForm,
+  parseRestBuilderConfig,
+  restBuilderConfigToRecord,
+  emptyRestBuilderConfig,
+  validateRestBuilderConfig,
+} from "@/components/rest-builder-source-form";
 import { StepSourceCredentials } from "@/components/connection-wizard/step-source-credentials";
 import { Button } from "@/components/ui/button";
 import { normalizeSourceConfigForConnector } from "@/lib/source-config-normalize";
@@ -56,6 +63,15 @@ export function ConnectorConfigForm({
     }
   }, [configText]);
 
+  const restBuilderConfig = useMemo(() => {
+    try {
+      const parsed = JSON.parse(configText || "{}") as Record<string, unknown>;
+      return parseRestBuilderConfig(parsed);
+    } catch {
+      return emptyRestBuilderConfig();
+    }
+  }, [configText]);
+
   useEffect(() => {
     if (connectorCode !== "bitrix24") return;
     const normalized = JSON.stringify(bitrix24ConfigToRecord(bitrix24Config), null, 2);
@@ -63,6 +79,14 @@ export function ConnectorConfigForm({
       onChangeText(normalized);
     }
   }, [connectorCode, bitrix24Config, configText, onChangeText]);
+
+  useEffect(() => {
+    if (connectorCode !== "rest_builder") return;
+    const normalized = JSON.stringify(restBuilderConfigToRecord(restBuilderConfig), null, 2);
+    if (normalized !== configText) {
+      onChangeText(normalized);
+    }
+  }, [connectorCode, restBuilderConfig, configText, onChangeText]);
 
   if (connectorCode === "google_sheet") {
     return (
@@ -123,6 +147,39 @@ export function ConnectorConfigForm({
           type="button"
           onClick={onSaveConfig}
           disabled={saving || Boolean(validateBitrix24Config(bitrix24Config))}
+          data-testid="button-save-source-config"
+        >
+          {saving ? "Сохранение…" : "Сохранить конфигурацию"}
+        </Button>
+      </div>
+    );
+  }
+
+  if (connectorCode === "rest_builder") {
+    return (
+      <div className="space-y-3" data-testid="wizard-connector-config-rest-builder">
+        <p className="text-sm text-muted-foreground">
+          REST API Builder. После изменений нажмите «Сохранить конфигурацию».
+        </p>
+        {needsPersist ? (
+          <p className="text-sm text-hint" data-testid="hint-credentials-unsaved">
+            Сохраните конфигурацию на сервере, чтобы перейти к следующему шагу.
+          </p>
+        ) : null}
+        <RestBuilderSourceForm
+          idPrefix="wizard-rb"
+          value={restBuilderConfig}
+          onChange={(cfg) => onChangeText(JSON.stringify(restBuilderConfigToRecord(cfg), null, 2))}
+        />
+        {saveError ? (
+          <p className="text-sm text-destructive" data-testid="error-save-source-config">
+            {saveError}
+          </p>
+        ) : null}
+        <Button
+          type="button"
+          onClick={onSaveConfig}
+          disabled={saving || Boolean(validateRestBuilderConfig(restBuilderConfig))}
           data-testid="button-save-source-config"
         >
           {saving ? "Сохранение…" : "Сохранить конфигурацию"}

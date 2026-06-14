@@ -1,0 +1,7 @@
+{
+  "result": [
+    {"ID": "101", "TITLE": "Сделка 1", "DATE_MODIFY": "2026-01-14T10:00:00+03:00", "STAGE_ID": "NEW"},
+    {"ID": "102", "TITLE": "Сделка 2", "DATE_MODIFY": "2026-01-15T11:30:00+03:00", "STAGE_ID": "WON"}
+  ],
+  "total": 2
+}

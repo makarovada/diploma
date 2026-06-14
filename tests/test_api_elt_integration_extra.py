@@ -159,7 +159,7 @@ def test_connections_trigger_elt_inline(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(
         elt_mod,
         "get_source",
-        lambda *_a, **_k: {"id": 10, "connector_code": "wildberries", "config_encrypted": "{}"},
+        lambda *_a, **_k: {"id": 10, "connector_code": "google_sheet", "config_encrypted": "{}"},
     )
     monkeypatch.setattr(
         elt_mod,

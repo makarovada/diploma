@@ -37,7 +37,7 @@ export function IssuesPage() {
       <PageHeader title="Проблемные записи" description="Центр качества данных" breadcrumbs="Данные / Проблемные записи" />
       <div className="overflow-auto rounded-lg border" data-testid="table-issues">
         <table className="w-full min-w-[980px] text-sm">
-          <thead className="bg-muted"><tr><th>Severity</th><th>Type</th><th>Connection</th><th>Stream</th><th>Field</th><th>Original</th><th>Suggested</th><th>Status</th><th>Действия</th></tr></thead>
+          <thead className="bg-muted"><tr><th>Severity</th><th>Тип</th><th>Connection</th><th>Stream</th><th>Field</th><th>Original</th><th>Suggested</th><th>Status</th><th>Действия</th></tr></thead>
           <tbody>
             {issues.length === 0 ? (
               <tr>
@@ -48,7 +48,14 @@ export function IssuesPage() {
             ) : (
               issues.map((issue) => (
                 <tr key={issue.id} className="border-t" data-testid={`row-issue-${issue.id}`}>
-                  <td>{issue.severity}</td><td>{issue.type}</td><td>{issue.connection}</td><td>{issue.stream}</td><td>{issue.field}</td><td>{issue.original}</td><td>{issue.suggested}</td><td>{issue.status}</td>
+                  <td>{issue.severity}</td>
+                  <td title={issue.explanation}>{issue.title ?? issue.type}</td>
+                  <td>{issue.connection}</td>
+                  <td>{issue.stream}</td>
+                  <td>{issue.field}</td>
+                  <td>{issue.original}</td>
+                  <td>{issue.suggested}</td>
+                  <td>{issue.status}</td>
                   <td className="flex flex-wrap gap-1">
                     <LinkAsButton href={`/issues/${issue.id}`} variant="outline" className="px-2 py-1 text-xs" data-testid={`button-open-issue-${issue.id}`}>
                       Открыть

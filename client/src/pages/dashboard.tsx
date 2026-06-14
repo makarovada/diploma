@@ -90,10 +90,7 @@ export function DashboardPage() {
 
       let normPct = "—";
       if (stagingRes && normRes.rows) {
-        const total =
-          stagingRes.raw_ozon_postings_staging +
-          stagingRes.raw_1c_orders_staging +
-          stagingRes.raw_google_sheet_orders_staging;
+        const total = stagingRes.raw_google_sheet_orders_staging;
         if (total > 0) {
           const iss = normRes.rows.length;
           normPct = `${Math.max(0, Math.min(100, ((total - iss) / total) * 100)).toFixed(1)}%`;

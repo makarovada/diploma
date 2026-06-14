@@ -10,6 +10,9 @@ from datanorma.sources.builder import (
     json_schema_from_openapi_response,
     load_rest_connector_yaml,
     openapi_to_ingest_json_schema,
+    probe_rest_builder_stream,
+    rest_builder_config_from_source,
+    rest_builder_config_valid,
 )
 
 pytestmark = pytest.mark.unit
@@ -108,3 +111,57 @@ streams:
     assert {s.name for s in cat.streams} == {"orders"}
     rows = list(src.read("orders", sync_mode="incremental", cursor_field="id", last_cursor="1"))
     assert any(int(r["id"]) > 1 for r in rows)
+
+
+def test_auth_inline_token() -> None:
+    cfg = load_rest_connector_yaml(
+        "base_url: https://x\nstreams: [{name: s, path: /p}]\nauth: {type: bearer, token: inline-secret}\n"
+    )
+    headers = _auth_headers(cfg.auth)
+    assert headers.get("Authorization") == "Bearer inline-secret"
+
+
+def test_rest_builder_config_from_structured() -> None:
+    cfg = rest_builder_config_from_source(
+        {
+            "base_url": "https://api.example.com",
+            "auth_type": "api_key_header",
+            "auth_token": "key123",
+            "auth_header_name": "X-Api-Key",
+            "streams": [
+                {
+                    "name": "posts",
+                    "path": "/posts",
+                    "method": "GET",
+                    "pagination_type": "none",
+                }
+            ],
+        }
+    )
+    assert cfg.base_url == "https://api.example.com"
+    assert cfg.auth.type == "api_key_header"
+    assert cfg.auth.token == "key123"
+    assert cfg.streams[0].name == "posts"
+
+
+def test_rest_builder_config_from_yaml_priority() -> None:
+    yaml_text = "base_url: https://yaml.example.com\nstreams: [{name: a, path: /a}]\n"
+    cfg = rest_builder_config_from_source({"base_url": "https://ignored.com", "streams": []}, yaml_text)
+    assert cfg.base_url == "https://yaml.example.com"
+
+
+def test_rest_builder_config_valid() -> None:
+    assert rest_builder_config_valid({"base_url": "https://x.com", "streams": [{"name": "s", "path": "/p"}]})
+    assert not rest_builder_config_valid({"base_url": ""})
+    assert not rest_builder_config_valid({})
+
+
+def test_probe_rest_builder_stream(monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = load_rest_connector_yaml(
+        "base_url: https://api.example.com\nstreams: [{name: posts, path: /posts, records_json_path: ''}]\n"
+    )
+    monkeypatch.setattr("datanorma.sources.builder.httpx.Client", _Client)
+    result = probe_rest_builder_stream(cfg, stream_index=0)
+    assert result["ok"] is True
+    assert result["status_code"] == 200
+    assert len(result["sample_records"]) >= 1

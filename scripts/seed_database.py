@@ -162,11 +162,7 @@ def _clear_seed_rows(conn: Connection) -> None:
     _delete_if_table(conn, "mapping_profile_legacy", "name LIKE :pfx", {"pfx": f"{_SEED_NAME_PREFIX}%"})
     _delete_if_table(conn, "integration_config", "config_key LIKE 'seed.%'")
 
-    for staging in (
-        "raw_google_sheet_orders_staging",
-        "raw_1c_orders_staging",
-        "raw_ozon_postings_staging",
-    ):
+    for staging in ("raw_google_sheet_orders_staging",):
         _delete_if_table(conn, staging, "ingest_batch_id = :bid", {"bid": _BATCH})
 
 
@@ -525,8 +521,6 @@ def _seed_legacy_optional(conn: Connection) -> None:
     if "connection_stream_id" in cols:
         return
     syncs = [
-        ("seed_ozon", '{"page": 12}'),
-        ("seed_1c", "2024-12-31T23:59:59"),
         ("seed_sheet", "row:840"),
     ]
     ajs = '{"cursor": null, "rows_emitted": 0, "edited_via": "seed"}'
@@ -542,8 +536,6 @@ def _seed_legacy_optional(conn: Connection) -> None:
         )
 
     for staging, payload_col, payload in (
-        ("raw_ozon_postings_staging", "payload_json", json.dumps({"posting_number": "SEED-OZ-1", "status": "delivered"})),
-        ("raw_1c_orders_staging", "row_json", json.dumps({"order_id": "S1C-1", "sum": 100})),
         ("raw_google_sheet_orders_staging", "row_json", json.dumps({"sheet_row": 1, "client": "Client 1"})),
     ):
         if not _has_table(conn, staging):
@@ -832,7 +824,7 @@ def _seed_demo_sync_runs(
 def seed_normalized_bulk(conn: Connection) -> None:
     """Витрина для dbt source normalized.seed_demo__orders."""
     loaded_at = datetime.now(timezone.utc)
-    systems = ["seed_1c", "seed_ozon", "seed_sheet"]
+    systems = ["seed_sheet"]
     conn.execute(text("CREATE SCHEMA IF NOT EXISTS normalized"))
     conn.execute(
         text(

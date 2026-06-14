@@ -21,6 +21,13 @@ import {
   validateBitrix24Config,
   type Bitrix24Config,
 } from "@/components/bitrix24-source-form";
+import {
+  emptyRestBuilderConfig,
+  RestBuilderSourceForm,
+  restBuilderConfigToRecord,
+  validateRestBuilderConfig,
+  type RestBuilderConfig,
+} from "@/components/rest-builder-source-form";
 import { hasGoogleOAuthCallback, OAUTH_WIZARD_RESTORE_KEY } from "@/lib/oauth-return";
 import { fetchV1ConnectorsCatalog, fetchWorkspaces } from "@/lib/api-datanorma";
 import { createEltSource } from "@/lib/api-elt";
@@ -43,6 +50,9 @@ function connectorConfigHint(connectorCode: string | null): string {
   }
   if (connectorCode === "yandex_metrika") {
     return "Для Яндекс Метрики: oauth_token, counter_id.";
+  }
+  if (connectorCode === "rest_builder") {
+    return "REST API Builder: base URL, авторизация, endpoints. Можно переключиться на YAML.";
   }
   return "Config (JSON) коннектора.";
 }
@@ -75,6 +85,7 @@ export function SourceNewPage() {
   const [configText, setConfigText] = useState("{}");
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState<GoogleSheetsConfig>(emptyGoogleSheetsConfig);
   const [bitrix24Config, setBitrix24Config] = useState<Bitrix24Config>(emptyBitrix24Config);
+  const [restBuilderConfig, setRestBuilderConfig] = useState<RestBuilderConfig>(emptyRestBuilderConfig);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -125,6 +136,9 @@ export function SourceNewPage() {
       if (String(item?.code) === "bitrix24") {
         setBitrix24Config(parseBitrix24Config(tmpl));
       }
+      if (String(item?.code) === "rest_builder") {
+        setRestBuilderConfig(emptyRestBuilderConfig());
+      }
     },
     [],
   );
@@ -136,8 +150,11 @@ export function SourceNewPage() {
     if (pickedCode === "bitrix24") {
       return bitrix24ConfigToRecord(bitrix24Config);
     }
+    if (pickedCode === "rest_builder") {
+      return restBuilderConfigToRecord(restBuilderConfig);
+    }
     return JSON.parse(configText || "{}") as Record<string, unknown>;
-  }, [pickedCode, googleSheetsConfig, bitrix24Config, configText]);
+  }, [pickedCode, googleSheetsConfig, bitrix24Config, restBuilderConfig, configText]);
 
   const configValidationError = useMemo(() => {
     if (pickedCode === "google_sheet") {
@@ -146,13 +163,16 @@ export function SourceNewPage() {
     if (pickedCode === "bitrix24") {
       return validateBitrix24Config(bitrix24Config);
     }
+    if (pickedCode === "rest_builder") {
+      return validateRestBuilderConfig(restBuilderConfig);
+    }
     try {
       JSON.parse(configText || "{}");
       return null;
     } catch {
       return "Некорректный JSON в конфигурации";
     }
-  }, [pickedCode, googleSheetsConfig, bitrix24Config, configText]);
+  }, [pickedCode, googleSheetsConfig, bitrix24Config, restBuilderConfig, configText]);
 
   const createMut = useMutation({
     mutationFn: () => {
@@ -223,7 +243,7 @@ export function SourceNewPage() {
         </div>
       )}
       {pickedCode ? (
-        <div className="mt-6 max-w-xl space-y-2">
+        <div className="mt-6 max-w-3xl space-y-2">
           <p className="text-sm text-muted-foreground">{connectorConfigHint(pickedCode)}</p>
           {pickedCode === "google_sheet" ? (
             <GoogleSheetsSourceForm
@@ -239,6 +259,8 @@ export function SourceNewPage() {
             />
           ) : pickedCode === "bitrix24" ? (
             <Bitrix24SourceForm value={bitrix24Config} onChange={setBitrix24Config} idPrefix="source-new-bx24" />
+          ) : pickedCode === "rest_builder" ? (
+            <RestBuilderSourceForm value={restBuilderConfig} onChange={setRestBuilderConfig} idPrefix="source-new-rb" />
           ) : (
             <>
               <label className="text-sm text-muted-foreground" htmlFor="source-config-json">

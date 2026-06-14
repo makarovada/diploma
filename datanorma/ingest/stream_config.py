@@ -7,9 +7,8 @@ from typing import Any, Literal
 SyncModeLiteral = Literal["full_refresh", "incremental"]
 
 DEFAULT_STREAMS: dict[str, str] = {
-    "ozon": "postings",
-    "1c": "orders",
     "google_sheet": "orders",
+    "bitrix24": "crm_deals",
 }
 
 
@@ -41,10 +40,7 @@ def staging_table_physical_name(integration_code: str, stream: str) -> str:
 
 
 def integration_code_from_yaml_key(key: str) -> str:
-    k = str(key).strip()
-    if k in ("google_sheet", "1c", "ozon"):
-        return k
-    return k
+    return str(key).strip()
 
 
 def parse_all_stream_configs(mappings: dict[str, Any] | None = None) -> dict[str, dict[str, Any]]:
@@ -63,14 +59,15 @@ def parse_all_stream_configs(mappings: dict[str, Any] | None = None) -> dict[str
             "cursor_field": cursor_field_for_source(code, cfg),
             "table": staging_table_physical_name(code, stream),
         }
-    for code in ("ozon", "1c", "google_sheet"):
+    for code in DEFAULT_STREAMS:
         if code not in out:
             stream = DEFAULT_STREAMS.get(code, "default")
+            cursor_field = "DATE_MODIFY" if code == "bitrix24" else None
             out[code] = {
                 "yaml_key": code,
                 "stream": stream,
-                "sync_mode": "full_refresh",
-                "cursor_field": None,
+                "sync_mode": "incremental" if code == "bitrix24" else "full_refresh",
+                "cursor_field": cursor_field,
                 "table": staging_table_physical_name(code, stream),
             }
     return out

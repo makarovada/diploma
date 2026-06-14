@@ -59,12 +59,12 @@ def test_elt_sources_create(monkeypatch) -> None:
         monkeypatch.setattr(
             elt_mod,
             "create_source_row",
-            lambda *_a, **_k: {"id": 9, "config_encrypted": "{}", "workspace_id": 1, "name": "S", "connector_code": "ozon"},
+            lambda *_a, **_k: {"id": 9, "config_encrypted": "{}", "workspace_id": 1, "name": "S", "connector_code": "google_sheet"},
         )
         monkeypatch.setattr(elt_mod, "public_source_payload", lambda row: {"id": row["id"], "config": {}})
         r = client.post(
             "/api/v1/sources",
-            json={"name": "S", "connector_code": "ozon", "config": {}},
+            json={"name": "S", "connector_code": "google_sheet", "config": {}},
             headers={"X-Workspace-Id": "1"},
         )
         assert r.status_code == 201
@@ -108,7 +108,7 @@ def test_elt_connection_trigger_domain(monkeypatch) -> None:
     monkeypatch.setattr(
         elt_mod,
         "get_source",
-        lambda *_a, **_k: {"id": 10, "connector_code": "ozon", "config_encrypted": "{}"},
+        lambda *_a, **_k: {"id": 10, "connector_code": "google_sheet", "config_encrypted": "{}"},
     )
     monkeypatch.setattr(elt_mod, "create_sync_run", lambda *_a, **_k: {"id": 88, "status": "queued"})
     monkeypatch.setattr(
@@ -123,6 +123,41 @@ def test_elt_connection_trigger_domain(monkeypatch) -> None:
         assert r.json()["execution_mode"] == "inline"
 
 
+def test_elt_connection_trigger_single_stream(monkeypatch) -> None:
+    monkeypatch.setattr(elt_mod, "record_audit_event", lambda *_a, **_k: None)
+    conn = MagicMock()
+    conn.execute.return_value.mappings.return_value.first.return_value = {"id": 5, "source_id": 10}
+    app = create_app()
+    app.dependency_overrides[get_current_user] = lambda: AuthUser("seed_integrator", frozenset({"data_integrator"}), user_id=1)
+    app.dependency_overrides[get_workspace_principal] = _fake_principal
+
+    def _yield_conn():
+        yield conn
+
+    app.dependency_overrides[get_conn] = _yield_conn
+    monkeypatch.setattr(
+        elt_mod,
+        "get_source",
+        lambda *_a, **_k: {"id": 10, "connector_code": "google_sheet", "config_encrypted": "{}"},
+    )
+    captured: dict = {}
+
+    def _run_inline(**kwargs):
+        captured.update(kwargs)
+        return ({"id": 88, "status": "success", "dagster_run_id": "elt_inline"}, {"streams": []})
+
+    monkeypatch.setattr(elt_mod, "create_sync_run", lambda *_a, **kw: {"id": 88, "status": "queued", "stream_name": kw.get("stream_name")})
+    monkeypatch.setattr(elt_mod, "run_sync_inline_for_connection", _run_inline)
+    with TestClient(app) as client2:
+        r = client2.post(
+            "/api/v1/connections/5/trigger",
+            json={"stream_name": "orders"},
+            headers={"X-Workspace-Id": "1"},
+        )
+        assert r.status_code == 202
+        assert captured.get("only_stream_name") == "orders"
+
+
 def test_elt_connection_trigger_failure(monkeypatch) -> None:
     monkeypatch.setattr(elt_mod, "record_audit_event", lambda *_a, **_k: None)
     conn = MagicMock()
@@ -135,7 +170,7 @@ def test_elt_connection_trigger_failure(monkeypatch) -> None:
         yield conn
 
     app.dependency_overrides[get_conn] = _yield_conn
-    monkeypatch.setattr(elt_mod, "get_source", lambda *_a, **_k: {"id": 10, "connector_code": "ozon", "config_encrypted": "{}"})
+    monkeypatch.setattr(elt_mod, "get_source", lambda *_a, **_k: {"id": 10, "connector_code": "google_sheet", "config_encrypted": "{}"})
     monkeypatch.setattr(elt_mod, "create_sync_run", lambda *_a, **_k: {"id": 99, "status": "queued"})
     monkeypatch.setattr(elt_mod, "run_sync_inline_for_connection", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("sync failed")))
     with TestClient(app) as client2:

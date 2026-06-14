@@ -11,17 +11,16 @@ pytestmark = pytest.mark.unit
 
 def test_flat_connectors() -> None:
     assert connector_schema_layout("google_sheet") == "flat"
-    assert connector_schema_layout("ozon") == "flat"
     meta = connector_schema_meta("google_sheet")
     assert meta["layout"] == "flat"
     assert len(meta["stream_defaults"]) == 1
 
 
 def test_entity_connectors() -> None:
-    meta = connector_schema_meta("wildberries")
+    meta = connector_schema_meta("yandex_metrika")
     assert meta["layout"] == "entities"
-    assert "orders" in meta["entity_labels"]
-    assert len(meta["stream_defaults"]) == 3
+    assert "visits" in meta["entity_labels"]
+    assert len(meta["stream_defaults"]) == 4
 
 
 def test_single_discovered_stream_is_flat() -> None:

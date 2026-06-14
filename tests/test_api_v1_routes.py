@@ -22,6 +22,7 @@ def test_api_v1_routes_registered() -> None:
     assert "/api/v1/syncs/{run_id}/logs" in paths
     assert "/api/v1/syncs/{run_id}/issues" in paths
     assert "/api/v1/syncs/{run_id}/retry" in paths
+    assert "/api/v1/syncs/{run_id}/cancel" in paths
     assert "/api/v1/issues/{issue_id}/resolve" in paths
     assert "/api/v1/issues/{issue_id}/ignore" in paths
     assert "/api/v1/workspaces" in paths

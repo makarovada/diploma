@@ -13,7 +13,7 @@ describe("normalizeSourceConfigForConnector", () => {
 
   it("leaves other connectors unchanged", () => {
     const cfg = { api_token: "x" };
-    expect(normalizeSourceConfigForConnector("ozon", cfg)).toBe(cfg);
+    expect(normalizeSourceConfigForConnector("yandex_metrika", cfg)).toBe(cfg);
   });
 });
 

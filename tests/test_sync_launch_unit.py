@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from datanorma.web.sync_launch import build_sync_audit_payload
+from datanorma.web.sync_launch import build_sync_audit_payload, only_stream_from_run_name
 
 pytestmark = pytest.mark.unit
 
@@ -15,7 +15,7 @@ def test_build_sync_audit_payload_minimal() -> None:
 def test_build_sync_audit_payload_full() -> None:
     payload = build_sync_audit_payload(
         execution_mode="inline_fallback",
-        integration_code="ozon",
+        integration_code="google_sheet",
         stream_name="orders",
         domain_connection_id=7,
         connection_id=11,
@@ -27,7 +27,7 @@ def test_build_sync_audit_payload_full() -> None:
     )
     assert payload == {
         "execution_mode": "inline_fallback",
-        "integration_code": "ozon",
+        "integration_code": "google_sheet",
         "stream_name": "orders",
         "domain_connection_id": 7,
         "connection_id": 11,
@@ -38,3 +38,9 @@ def test_build_sync_audit_payload_full() -> None:
         "elt_summary": {"total_rows_written": 10},
     }
 
+
+def test_only_stream_from_run_name() -> None:
+    assert only_stream_from_run_name(None) is None
+    assert only_stream_from_run_name("*") is None
+    assert only_stream_from_run_name("  ") is None
+    assert only_stream_from_run_name("orders") == "orders"

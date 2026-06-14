@@ -44,6 +44,7 @@ export const queryKeys = {
   },
   connectionIssues: {
     bySource: (source: string | undefined) => ["normalization-issues", "by-source", source ?? ""] as const,
+    byConnection: (id: string) => ["normalization-issues", "by-connection", id] as const,
   },
   connectionRuns: {
     byConnection: (id: string) => ["v1-syncs", "by-connection", id] as const,

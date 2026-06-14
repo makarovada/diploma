@@ -8,192 +8,164 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import inspect, text
 from sqlalchemy.engine import Connection, Engine
 
-from datanorma.ingest.cursor_filter import max_cursor_from_dict_rows, max_cursor_from_postings
-from datanorma.ingest.stream_config import parse_all_stream_configs
+from datanorma.ingest.cursor_filter import max_cursor_from_dict_rows
+from datanorma.ingest.stream_config import parse_all_stream_configs, staging_table_physical_name
 from datanorma.warehouse.sync_state_repo import build_ingest_state_dict, ensure_phase1_schema
 
 _log = logging.getLogger(__name__)
-
-# Имена таблиц после миграции 002 (whitelist для SQL).
-OZ_TABLE = "raw_ozon_postings_staging"
-C1_TABLE = "raw_1c_orders_staging"
-SH_TABLE = "raw_google_sheet_orders_staging"
 
 
 def _json_dumps(obj: Any) -> str:
     return json.dumps(obj, ensure_ascii=False, default=str)
 
 
-def _oz_sql(table: str) -> Any:
-    if table != OZ_TABLE:
-        raise ValueError(f"unexpected ozon staging table: {table}")
-    return text(
-        f"INSERT INTO {OZ_TABLE} (ingest_batch_id, payload_json, _ingest_extracted_at, _ingest_meta) "
-        "VALUES (:bid, CAST(:payload AS jsonb), :ext, CAST(:meta AS jsonb))"
-    )
-
-
 def _row_sql(table: str) -> Any:
-    if table == C1_TABLE:
-        t = C1_TABLE
-    elif table == SH_TABLE:
-        t = SH_TABLE
-    else:
-        raise ValueError(f"unexpected tabular staging table: {table}")
     return text(
-        f"INSERT INTO {t} (ingest_batch_id, row_json, _ingest_extracted_at, _ingest_meta) "
+        f"INSERT INTO {table} (ingest_batch_id, row_json, _ingest_extracted_at, _ingest_meta) "
         "VALUES (:bid, CAST(:row AS jsonb), :ext, CAST(:meta AS jsonb))"
     )
+
+
+def ensure_raw_staging_table(engine: Engine, table_name: str) -> None:
+    """Создаёт raw_*_staging при отсутствии (тот же контракт, что в миграциях Phase 1)."""
+    insp = inspect(engine)
+    if table_name in insp.get_table_names():
+        return
+    ddl = text(
+        f"""
+        CREATE TABLE IF NOT EXISTS {table_name} (
+            id BIGSERIAL PRIMARY KEY,
+            ingest_batch_id UUID NOT NULL,
+            row_json JSONB NOT NULL,
+            ingested_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            _ingest_raw_id UUID NOT NULL DEFAULT gen_random_uuid(),
+            _ingest_extracted_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            _ingest_meta JSONB NOT NULL DEFAULT '{{}}'::jsonb
+        )
+        """
+    )
+    with engine.begin() as conn:
+        conn.execute(ddl)
+    _log.info("created raw staging table %s", table_name)
+
+
+def _persist_one_raw_payload(
+    conn: Connection,
+    *,
+    raw_payload: dict[str, Any],
+    stream_cfg: dict[str, Any],
+    batch_id: uuid.UUID,
+    extracted_at: datetime,
+) -> tuple[int, int, str]:
+    integration_code = str(raw_payload.get("source_system") or stream_cfg.get("yaml_key") or "")
+    stream_name = str(raw_payload.get("stream_name") or stream_cfg.get("stream") or "default")
+    table_name = str(stream_cfg.get("table") or staging_table_physical_name(integration_code, stream_name))
+    rows = raw_payload.get("rows") or []
+
+    ingest_meta = {
+        "batch_id": str(batch_id),
+        "ingested_at_utc": extracted_at.isoformat(),
+        "ingest_mode": raw_payload.get("ingest_mode"),
+        "source_ref": raw_payload.get("source_ref"),
+    }
+
+    row_sql = _row_sql(table_name)
+    written = 0
+    errors = 0
+    for row in rows:
+        try:
+            meta = {
+                **ingest_meta,
+                "source": integration_code,
+                "stream": stream_name,
+                "table": table_name,
+                "record_error": None,
+            }
+            conn.execute(
+                row_sql,
+                {"bid": batch_id, "row": _json_dumps(row), "ext": extracted_at, "meta": _json_dumps(meta)},
+            )
+            written += 1
+        except Exception as exc:
+            errors += 1
+            _log.warning("%s row skipped: %s", integration_code, exc)
+
+    _persist_stream_state(
+        conn,
+        integration_code=integration_code,
+        cfg=stream_cfg,
+        rows_emitted=written,
+        batch_id=str(batch_id),
+        tabular_rows=rows,
+    )
+    return written, errors, table_name
 
 
 def load_raw_to_staging(
     engine: Engine,
     *,
-    raw_ozon: dict[str, Any],
-    raw_1c: dict[str, Any],
-    raw_sheet: dict[str, Any],
+    raw_payloads: list[dict[str, Any]] | None = None,
+    raw_sheet: dict[str, Any] | None = None,
     mappings: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Записывает один или несколько унифицированных raw payload в staging и sync_state."""
     ensure_phase1_schema(engine)
     stream_cfgs = parse_all_stream_configs(mappings)
+
+    payloads = list(raw_payloads or [])
+    if raw_sheet is not None:
+        legacy = dict(raw_sheet)
+        legacy.setdefault("source_system", "google_sheet")
+        legacy.setdefault("stream_name", stream_cfgs["google_sheet"]["stream"])
+        payloads.append(legacy)
+
+    if not payloads:
+        raise ValueError("load_raw_to_staging: нужен хотя бы один raw payload")
+
+    for cfg in stream_cfgs.values():
+        ensure_raw_staging_table(engine, str(cfg["table"]))
+
     batch_id = uuid.uuid4()
     extracted_at = datetime.now(timezone.utc)
 
-    postings = raw_ozon.get("postings") or []
-    rows_1c = raw_1c.get("rows") or []
-    rows_sheet = raw_sheet.get("rows") or []
+    rows_written: dict[str, int] = {}
+    row_errors: dict[str, int] = {}
+    staging_tables: dict[str, str] = {}
+    sync_state_codes: list[str] = []
 
-    oz_cfg = stream_cfgs["ozon"]
-    c1_cfg = stream_cfgs["1c"]
-    sh_cfg = stream_cfgs["google_sheet"]
-
-    ingest_meta = {
-        "batch_id": str(batch_id),
-        "ingested_at_utc": extracted_at.isoformat(),
-        "ozon_ingest_mode": raw_ozon.get("ingest_mode"),
-        "onec_ingest_mode": raw_1c.get("ingest_mode"),
-        "sheet_ingest_mode": raw_sheet.get("ingest_mode"),
-    }
-
-    oz_table = oz_cfg["table"]
-    c1_table = c1_cfg["table"]
-    sh_table = sh_cfg["table"]
-
-    oz_sql = _oz_sql(oz_table)
-    c1_sql = _row_sql(c1_table)
-    sh_sql = _row_sql(sh_table)
-
-    n_oz = n_1c = n_sh = 0
-    e_oz = e_1c = e_sh = 0
     with engine.begin() as conn:
-        for p in postings:
-            try:
-                meta = {
-                    **ingest_meta,
-                    "source": "ozon",
-                    "stream": oz_cfg["stream"],
-                    "table": oz_table,
-                    "record_error": None,
-                }
-                conn.execute(
-                    oz_sql,
-                    {
-                        "bid": batch_id,
-                        "payload": _json_dumps(p),
-                        "ext": extracted_at,
-                        "meta": _json_dumps(meta),
-                    },
-                )
-                n_oz += 1
-            except Exception as exc:
-                e_oz += 1
-                _log.warning("ozon row skipped: %s", exc)
-        for r in rows_1c:
-            try:
-                meta = {
-                    **ingest_meta,
-                    "source": "1c",
-                    "stream": c1_cfg["stream"],
-                    "table": c1_table,
-                    "record_error": None,
-                }
-                conn.execute(
-                    c1_sql,
-                    {"bid": batch_id, "row": _json_dumps(r), "ext": extracted_at, "meta": _json_dumps(meta)},
-                )
-                n_1c += 1
-            except Exception as exc:
-                e_1c += 1
-                _log.warning("1c row skipped: %s", exc)
-        for r in rows_sheet:
-            try:
-                meta = {
-                    **ingest_meta,
-                    "source": "google_sheet",
-                    "stream": sh_cfg["stream"],
-                    "table": sh_table,
-                    "record_error": None,
-                }
-                conn.execute(
-                    sh_sql,
-                    {"bid": batch_id, "row": _json_dumps(r), "ext": extracted_at, "meta": _json_dumps(meta)},
-                )
-                n_sh += 1
-            except Exception as exc:
-                e_sh += 1
-                _log.warning("google_sheet row skipped: %s", exc)
+        for raw_payload in payloads:
+            code = str(raw_payload.get("source_system") or "")
+            if code not in stream_cfgs:
+                raise ValueError(f"unknown source_system in raw payload: {code!r}")
+            cfg = stream_cfgs[code]
+            n_written, n_errors, table_name = _persist_one_raw_payload(
+                conn,
+                raw_payload=raw_payload,
+                stream_cfg=cfg,
+                batch_id=batch_id,
+                extracted_at=extracted_at,
+            )
+            rows_written[code] = n_written
+            row_errors[code] = n_errors
+            staging_tables[code] = table_name
+            if code not in sync_state_codes:
+                sync_state_codes.append(code)
 
-        _persist_stream_state(
-            conn,
-            integration_code="ozon",
-            cfg=oz_cfg,
-            rows_emitted=n_oz,
-            batch_id=str(batch_id),
-            postings=postings,
-            tabular_rows=None,
-        )
-        _persist_stream_state(
-            conn,
-            integration_code="1c",
-            cfg=c1_cfg,
-            rows_emitted=n_1c,
-            batch_id=str(batch_id),
-            postings=None,
-            tabular_rows=rows_1c,
-        )
-        _persist_stream_state(
-            conn,
-            integration_code="google_sheet",
-            cfg=sh_cfg,
-            rows_emitted=n_sh,
-            batch_id=str(batch_id),
-            postings=None,
-            tabular_rows=rows_sheet,
-        )
-
-    _log.info(
-        "staging: batch=%s ozon=%s 1c=%s sheet=%s errors=(%s,%s,%s)",
-        batch_id,
-        n_oz,
-        n_1c,
-        n_sh,
-        e_oz,
-        e_1c,
-        e_sh,
-    )
+    total_written = sum(rows_written.values())
+    _log.info("staging: batch=%s rows=%s errors=%s", batch_id, rows_written, row_errors)
 
     return {
         "ingest_batch_id": str(batch_id),
         "batch_extracted_at": extracted_at.isoformat(),
-        "ozon_rows_written": n_oz,
-        "onec_rows_written": n_1c,
-        "sheet_rows_written": n_sh,
-        "row_errors": {"ozon": e_oz, "1c": e_1c, "google_sheet": e_sh},
-        "sync_state_codes": ["ozon", "1c", "google_sheet"],
-        "staging_tables": {"ozon": oz_table, "1c": c1_table, "google_sheet": sh_table},
+        "rows_written": rows_written,
+        "sheet_rows_written": total_written,
+        "row_errors": row_errors,
+        "sync_state_codes": sync_state_codes,
+        "staging_tables": staging_tables,
     }
 
 
@@ -203,17 +175,12 @@ def _persist_stream_state(
     cfg: dict[str, Any],
     rows_emitted: int,
     batch_id: str,
-    postings: list[dict[str, Any]] | None,
     tabular_rows: list[dict[str, Any]] | None,
 ) -> None:
     sync_mode = cfg["sync_mode"]
     stream_name = cfg["stream"]
     cursor_field = cfg.get("cursor_field")
-
-    if postings is not None:
-        new_cursor = max_cursor_from_postings(postings, cursor_field)
-    else:
-        new_cursor = max_cursor_from_dict_rows(tabular_rows or [], cursor_field)
+    new_cursor = max_cursor_from_dict_rows(tabular_rows or [], cursor_field)
 
     ingest_state = build_ingest_state_dict(cursor=new_cursor, rows_emitted=rows_emitted, batch_id=batch_id)
     legacy_cv = _json_dumps({"cursor": new_cursor, "batch_id": batch_id, "rows": rows_emitted})

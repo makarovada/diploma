@@ -91,7 +91,7 @@ def test_sync_logs_synthetic_when_no_db_rows(monkeypatch: pytest.MonkeyPatch) ->
 def test_sync_retry_invalid_and_issue_actions(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = MagicMock()
     monkeypatch.setattr(api_mod, "_audit_api", lambda *_a, **_k: None)
-    monkeypatch.setattr(api_mod, "get_sync_run", lambda *_a, **_k: {"id": 7, "connection_id": 1, "integration_code": "ozon", "stream_name": "postings"})
+    monkeypatch.setattr(api_mod, "get_sync_run", lambda *_a, **_k: {"id": 7, "connection_id": 1, "integration_code": "google_sheet", "stream_name": "postings"})
     monkeypatch.setattr(api_mod, "create_sync_run", lambda *_a, **_k: {"id": 99})
     monkeypatch.setattr(api_mod, "launch_sync_run_via_dagster", lambda *_a, **_k: (_ for _ in ()).throw(SyncRunError("boom")))
     monkeypatch.setattr(api_mod, "mark_sync_run_failed", lambda *_a, **_k: {"id": 99, "status": "failed"})
@@ -106,7 +106,7 @@ def test_sync_retry_invalid_and_issue_actions(monkeypatch: pytest.MonkeyPatch) -
 def test_sync_streams_list_upsert_and_syncs_list(monkeypatch: pytest.MonkeyPatch) -> None:
     conn = MagicMock()
     conn.execute.side_effect = [
-        _MapResult([{"id": 1, "integration_code": "ozon", "stream_name": "postings"}]),
+        _MapResult([{"id": 1, "integration_code": "google_sheet", "stream_name": "postings"}]),
         _MapResult([]),
     ]
     monkeypatch.setattr(api_mod, "_audit_api", lambda *_a, **_k: None)
@@ -117,11 +117,11 @@ def test_sync_streams_list_upsert_and_syncs_list(monkeypatch: pytest.MonkeyPatch
         listed = client.get("/api/v1/sync-streams")
         upsert = client.post(
             "/api/v1/sync-streams",
-            json={"integration_code": "ozon", "stream_name": "postings", "sync_mode": "incremental"},
+            json={"integration_code": "google_sheet", "stream_name": "postings", "sync_mode": "incremental"},
         )
         syncs = client.get("/api/v1/syncs")
     assert listed.status_code == 200
-    assert listed.json()["items"][0]["integration_code"] == "ozon"
+    assert listed.json()["items"][0]["integration_code"] == "google_sheet"
     assert upsert.status_code == 200
     assert syncs.status_code == 200
     assert syncs.json()["items"][0]["destination"] == "pg"

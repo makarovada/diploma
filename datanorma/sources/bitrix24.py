@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Any, Iterator
 
 from datanorma.config import get_settings
@@ -39,6 +41,12 @@ _CURSOR_FIELD_RAW = _DEFAULT_CURSOR_FIELD
 
 _PAGE_SIZE = 50
 
+_FIXTURE_DIR = Path(__file__).resolve().parents[2] / "data" / "fixtures" / "bitrix24"
+_FIXTURE_STREAM_FILES: dict[str, tuple[str, ...]] = {
+    "crm_deals": ("deals_page1.json",),
+    "crm_leads": ("leads_page1.json", "leads_page2.json"),
+}
+
 
 def normalize_bitrix24_webhook_url(raw: str) -> str:
     """Базовый URL входящего webhook без /profile.json и лишних слэшей."""
@@ -63,6 +71,11 @@ class Bitrix24Source(BaseSource):
         self._source_config = source_config or {}
         self._settings = get_settings()
         self._last_ingest_mode: str = "bitrix24_api"
+        self._last_source_ref: str = ""
+
+    @property
+    def last_source_ref(self) -> str:
+        return self._last_source_ref
 
     def _webhook_url(self) -> str:
         raw = cfg_str(self._source_config, "webhook_url", self._settings.bitrix24_webhook_url or "")
@@ -115,6 +128,24 @@ class Bitrix24Source(BaseSource):
             start = int(body.get("next") or 0)
             _log.debug("Bitrix24 %s: пагинация start=%s", method, start)
         return out
+
+    def _load_fixture_rows(self, stream_name: str) -> tuple[list[dict[str, Any]], str]:
+        files = _FIXTURE_STREAM_FILES.get(stream_name)
+        if not files:
+            raise ValueError(
+                f"Bitrix24: нет webhook_url и нет фикстуры для потока {stream_name!r}. "
+                f"Укажите DATANORMA_BITRIX24_WEBHOOK_URL или используйте поток с фикстурой."
+            )
+        rows: list[dict[str, Any]] = []
+        refs: list[str] = []
+        for name in files:
+            path = _FIXTURE_DIR / name
+            if not path.is_file():
+                raise FileNotFoundError(f"Bitrix24 fixture not found: {path}")
+            body = json.loads(path.read_text(encoding="utf-8"))
+            refs.append(str(path))
+            rows.extend(self._normalize_record(dict(x)) for x in self._extract_rows(body))
+        return rows, refs[0] if len(refs) == 1 else ", ".join(refs)
 
     def _fetch_all(self, stream_name: str) -> list[dict[str, Any]]:
         method = _STREAM_METHODS.get(stream_name)
@@ -170,11 +201,15 @@ class Bitrix24Source(BaseSource):
             return SourceCheckResult(ok=False, message=str(exc), details={"mode": "bitrix24_api"})
 
     def discover(self) -> IngestCatalog:
-        if not self._webhook_url():
-            raise ValueError("Bitrix24: нужен webhook_url.")
+        webhook_url = self._webhook_url()
         streams_out = []
         for stream_name in _STREAM_METHODS:
-            rows = self._sample_rows(stream_name, limit=200)
+            if webhook_url:
+                rows = self._sample_rows(stream_name, limit=200)
+            elif stream_name in _FIXTURE_STREAM_FILES:
+                rows, _ref = self._load_fixture_rows(stream_name)
+            else:
+                rows = []
             schema = records_to_json_schema(rows) if rows else {"type": "object", "properties": {}}
             streams_out.append(
                 self.ingest_stream(
@@ -197,13 +232,19 @@ class Bitrix24Source(BaseSource):
     ) -> Iterator[dict[str, Any]]:
         if stream_name not in _STREAM_METHODS:
             raise ValueError(f"Bitrix24: неизвестный stream {stream_name!r}")
-        if not self._webhook_url():
-            raise ValueError("Bitrix24: нужен webhook_url.")
 
-        if sync_mode == "incremental" and last_cursor:
-            rows = self._fetch_incremental(stream_name, last_cursor)
+        webhook_url = self._webhook_url()
+        if webhook_url:
+            self._last_ingest_mode = "bitrix24_api"
+            self._last_source_ref = webhook_url
+            if sync_mode == "incremental" and last_cursor:
+                rows = self._fetch_incremental(stream_name, last_cursor)
+            else:
+                rows = self._fetch_all(stream_name)
         else:
-            rows = self._fetch_all(stream_name)
+            rows, ref = self._load_fixture_rows(stream_name)
+            self._last_ingest_mode = "fixture_json"
+            self._last_source_ref = ref
 
         eff_cursor = cursor_field or _cursor_for(stream_name)
         filtered = filter_incremental_dict_rows(

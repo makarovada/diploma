@@ -15,8 +15,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # --- константы (не из env) ---
 
-OZON_API_BASE: Final[str] = "https://api-seller.ozon.ru"
-
 DEFAULT_DATABASE_URL: Final[str] = (
     "postgresql+psycopg://datanorma:datanorma@127.0.0.1:5433/datanorma"
 )
@@ -49,12 +47,6 @@ class Settings(BaseSettings):
     datanorma_sms_webhook_url: str = ""
     datanorma_sms_webhook_token: str = ""
 
-    ozon_client_id: str = ""
-    ozon_api_key: str = ""
-    ozon_fetch_limit: int = 100
-
-    # --- новые коннекторы (offline demo через fixtures) ---
-    wildberries_api_token: str = Field(default="", validation_alias="DATANORMA_WB_API_TOKEN")
     bitrix24_webhook_url: str = Field(default="", validation_alias="DATANORMA_BITRIX24_WEBHOOK_URL")
     amocrm_base_url: str = Field(default="", validation_alias="DATANORMA_AMOCRM_BASE_URL")
     amocrm_token: str = Field(default="", validation_alias="DATANORMA_AMOCRM_TOKEN")
@@ -77,8 +69,6 @@ class Settings(BaseSettings):
         default="",
         validation_alias="DATANORMA_GOOGLE_OAUTH_FRONTEND_RETURN_URL",
     )
-
-    datanorma_1c_export_path: str = ""
 
     yandex_metrika_oauth_token: str = ""
     yandex_metrika_counter_id: str = ""

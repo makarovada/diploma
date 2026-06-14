@@ -42,10 +42,16 @@ export type Issue = {
   id: string;
   severity: "low" | "medium" | "high";
   type: string;
+  title?: string;
+  explanation?: string;
+  recommendedAction?: string;
   connection: string;
+  connectionId?: string;
+  syncRunId?: string;
   stream: string;
   field: string;
   original: string;
+  rawValue?: string;
   suggested: string;
   status: "open" | "resolved" | "ignored";
 };

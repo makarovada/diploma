@@ -12,7 +12,8 @@ pytestmark = pytest.mark.unit
 
 
 @patch("datanorma.warehouse.raw_staging.ensure_phase1_schema")
-def test_load_raw_to_staging_execute_count(_schema: MagicMock) -> None:
+@patch("datanorma.warehouse.raw_staging.ensure_raw_staging_table")
+def test_load_raw_to_staging_execute_count(_ensure_table: MagicMock, _schema: MagicMock) -> None:
     conn = MagicMock()
 
     @contextmanager
@@ -22,15 +23,11 @@ def test_load_raw_to_staging_execute_count(_schema: MagicMock) -> None:
     engine = MagicMock()
     engine.begin = _begin
 
-    raw_ozon = {"postings": [{"a": 1}, {"b": 2}]}
-    raw_1c = {"rows": [{"x": 1}]}
-    raw_sheet = {"rows": []}
+    raw_sheet = {"rows": [{"x": 1}, {"y": 2}]}
 
-    out = load_raw_to_staging(engine, raw_ozon=raw_ozon, raw_1c=raw_1c, raw_sheet=raw_sheet)
+    out = load_raw_to_staging(engine, raw_sheet=raw_sheet)
 
-    assert out["ozon_rows_written"] == 2
-    assert out["onec_rows_written"] == 1
-    assert out["sheet_rows_written"] == 0
+    assert out["sheet_rows_written"] == 2
     assert "ingest_batch_id" in out
-    # 2 oz + 1 1c + 0 sheet + 3 sync_state
-    assert conn.execute.call_count == 6
+    # 2 sheet rows + 1 sync_state
+    assert conn.execute.call_count == 3

@@ -17,13 +17,13 @@ def test_sync_catalog_builds_streams(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         sync_catalog,
         "parse_all_stream_configs",
-        lambda *_: {"ozon": {"stream": "orders", "sync_mode": "incremental"}},
+        lambda *_: {"google_sheet": {"stream": "orders", "sync_mode": "incremental"}},
     )
-    monkeypatch.setattr(sync_catalog, "fetch_sync_state_map", lambda _e: {("ozon", "orders"): {"cursor": "10"}})
+    monkeypatch.setattr(sync_catalog, "fetch_sync_state_map", lambda _e: {("google_sheet", "orders"): {"cursor": "10"}})
     monkeypatch.setattr(sync_catalog, "extract_stream_cursor", lambda _r: "10")
     out = sync_catalog.sync_catalog(_Pg())
     assert out["mappings_version"] == "rules_v1"
-    assert out["streams"]["ozon"]["resume_from_state"] is True
+    assert out["streams"]["google_sheet"]["resume_from_state"] is True
 
 
 def test_dbt_profile_writer_and_subprocess_fallback(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

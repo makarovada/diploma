@@ -1,5 +1,10 @@
 import type { Bitrix24Config } from "@/components/bitrix24-source-form";
 import { bitrix24ConfigToRecord, parseBitrix24Config } from "@/components/bitrix24-source-form";
+import {
+  normalizeRestBuilderConfig,
+  parseRestBuilderConfig,
+  restBuilderConfigToRecord,
+} from "@/lib/rest-builder-config";
 
 /** Нормализует config источника перед сохранением / отображением в мастере. */
 export function normalizeSourceConfigForConnector(
@@ -8,6 +13,9 @@ export function normalizeSourceConfigForConnector(
 ): Record<string, unknown> {
   if (connectorCode === "bitrix24") {
     return bitrix24ConfigToRecord(parseBitrix24Config(config));
+  }
+  if (connectorCode === "rest_builder") {
+    return restBuilderConfigToRecord(normalizeRestBuilderConfig(parseRestBuilderConfig(config)));
   }
   return config;
 }

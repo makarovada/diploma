@@ -81,6 +81,16 @@ export type V1SyncRunItem = {
   issues_count?: number;
   /** Фактическая длительность ELT, мс (если started_at/finished_at совпали в транзакции) */
   duration_ms?: number;
+  meta?: {
+    elt_summary?: {
+      streams?: Array<{ stream_name?: string; rows_written?: number }>;
+      total_rows_written?: number;
+      total_issues?: number;
+      cancelled?: boolean;
+    };
+    duration_ms?: number;
+    cancel_requested?: boolean;
+  } | null;
   load_destination?: { connector_code: string; name: string };
 };
 
@@ -102,8 +112,6 @@ export type SalesSummaryDto = {
 };
 
 export type StagingCountsDto = {
-  raw_ozon_postings_staging: number;
-  raw_1c_orders_staging: number;
   raw_google_sheet_orders_staging: number;
 };
 

@@ -142,12 +142,46 @@ export function patchEltConnection(
   );
 }
 
-export function triggerEltConnection(connectionId: number, workspaceCode = "main", init?: ApiRequestInit) {
-  return apiPostJson<EltConnectionTriggerResponseDto, Record<string, never>>(
+export function triggerEltConnection(
+  connectionId: number,
+  workspaceCode = "main",
+  options?: { streamName?: string },
+  init?: ApiRequestInit,
+) {
+  const body = options?.streamName ? { stream_name: options.streamName } : {};
+  return apiPostJson<EltConnectionTriggerResponseDto, { stream_name?: string }>(
     `/api/v1/connections/${connectionId}/trigger?${ws(workspaceCode)}`,
-    {},
+    body,
     init,
   );
+}
+
+export async function patchEltConnectionStreamEnabled(
+  connectionId: number,
+  streamName: string,
+  enabled: boolean,
+  workspaceCode = "main",
+  init?: ApiRequestInit,
+) {
+  const { item } = await fetchEltConnection(connectionId, workspaceCode, init);
+  const streams = (item.streams ?? []).map((s) => ({
+    stream_name: s.stream_name,
+    sync_mode: (s.sync_mode || "full_refresh") as "full_refresh" | "incremental",
+    destination_sync_mode: s.destination_sync_mode ?? "refresh_overwrite",
+    cursor_field: s.cursor_field,
+    primary_key: s.primary_key,
+    is_enabled: s.stream_name === streamName ? enabled : s.is_enabled,
+  }));
+  return patchEltConnection(connectionId, { streams, workspace_code: workspaceCode }, init);
+}
+
+export function triggerEltConnectionStream(
+  connectionId: number,
+  streamName: string,
+  workspaceCode = "main",
+  init?: ApiRequestInit,
+) {
+  return triggerEltConnection(connectionId, workspaceCode, { streamName }, init);
 }
 
 export function deleteEltConnection(connectionId: number, workspaceCode = "main", init?: ApiRequestInit) {

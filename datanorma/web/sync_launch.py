@@ -50,6 +50,12 @@ def build_sync_audit_payload(
     return payload
 
 
+def only_stream_from_run_name(stream_name: str | None) -> str | None:
+    if not stream_name or str(stream_name).strip() in ("", "*"):
+        return None
+    return str(stream_name).strip()
+
+
 def launch_sync_run_via_dagster(
     *,
     conn: Connection,
@@ -75,16 +81,33 @@ def run_sync_inline_for_connection(
     domain_connection_id: int,
     extra_meta: dict[str, Any] | None = None,
     execution_mode: str = "inline",
+    only_stream_name: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Синхронизация доменного connection: source.read → destination.write (без Dagster daily_refresh)."""
+    from datanorma.web.sync_runs import SyncCancelled, mark_sync_run_cancelled
+
     mark_sync_run_started_inline(conn, run_id=run_id)
     t0 = time.monotonic()
-    summary = run_connection_sync(
-        conn,
-        workspace_id=workspace_id,
-        domain_connection_id=domain_connection_id,
-        sync_run_id=run_id,
-    )
+    try:
+        summary = run_connection_sync(
+            conn,
+            workspace_id=workspace_id,
+            domain_connection_id=domain_connection_id,
+            sync_run_id=run_id,
+            only_stream_name=only_stream_name,
+        )
+    except SyncCancelled as exc:
+        duration_ms = max(1, int((time.monotonic() - t0) * 1000))
+        meta_patch: dict[str, Any] = {
+            "elt_summary": exc.summary,
+            "duration_ms": duration_ms,
+            "execution_mode": execution_mode,
+            "cancelled": True,
+        }
+        if extra_meta:
+            meta_patch.update(extra_meta)
+        row = mark_sync_run_cancelled(conn, run_id, meta_patch=meta_patch)
+        return row, exc.summary
     duration_ms = max(1, int((time.monotonic() - t0) * 1000))
     meta_patch: dict[str, Any] = {
         "elt_summary": summary,

@@ -8,6 +8,7 @@ import { LogViewer } from "@/components/log-viewer";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import {
+  cancelV1Sync,
   fetchV1Sync,
   fetchV1SyncIssues,
   fetchV1SyncLogs,
@@ -17,6 +18,7 @@ import {
   syncRunLogItemsToLines,
   syncRunLogLines,
 } from "@/lib/api-datanorma";
+import { CANCEL_SYNC_HINT, explainIssuesBanner, explainSyncRunError } from "@/lib/issue-explanations";
 import { queryKeys } from "@/lib/query-keys";
 
 export function RunDetailPage() {
@@ -31,6 +33,10 @@ export function RunDetailPage() {
       return item;
     },
     enabled: Number.isFinite(runId) && runId > 0,
+    refetchInterval: (q) => {
+      const st = q.state.data?.status?.toLowerCase();
+      return st === "running" || st === "queued" ? 3000 : false;
+    },
   });
   const queryClient = useQueryClient();
   const logsQuery = useQuery({
@@ -51,6 +57,13 @@ export function RunDetailPage() {
   });
   const retryMutation = useMutation({
     mutationFn: () => retryV1Sync(runId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["runs", "v1"] });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.runs.detail(rawId) });
+    },
+  });
+  const cancelMutation = useMutation({
+    mutationFn: () => cancelV1Sync(runId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["runs", "v1"] });
       await queryClient.invalidateQueries({ queryKey: queryKeys.runs.detail(rawId) });
@@ -87,6 +100,8 @@ export function RunDetailPage() {
   const logs = logsQuery.data ? syncRunLogItemsToLines(logsQuery.data) : syncRunLogLines(item);
   const runIssues = issuesQuery.data ?? [];
   const currentStage = logsQuery.data?.[logsQuery.data.length - 1]?.stage ?? run.stage;
+  const failExplain = explainSyncRunError(item.error_message);
+  const issuesBanner = run.issues > 0 ? explainIssuesBanner(run.issues) : null;
 
   return (
     <div className="space-y-4 p-4">
@@ -96,6 +111,17 @@ export function RunDetailPage() {
         breadcrumbs="Синхронизация / Запуски / Детали"
         actions={
           <div className="flex flex-wrap gap-2">
+            {run.status === "running" || run.status === "queued" ? (
+              <Button
+                type="button"
+                variant="outline"
+                data-testid="button-cancel-run"
+                disabled={cancelMutation.isPending}
+                onClick={() => cancelMutation.mutate()}
+              >
+                {cancelMutation.isPending ? "Отмена…" : "Отменить"}
+              </Button>
+            ) : null}
             <Button type="button" data-testid="button-rerun" onClick={() => retryMutation.mutate()} disabled={retryMutation.isPending}>
               {retryMutation.isPending ? "Повтор..." : "Повторить"}
             </Button>
@@ -110,6 +136,11 @@ export function RunDetailPage() {
           </div>
         }
       />
+      {(run.status === "running" || run.status === "queued") && cancelMutation.isIdle ? (
+        <Card className="border-muted p-3 text-sm text-muted-foreground" data-testid="run-cancel-hint">
+          {CANCEL_SYNC_HINT}
+        </Card>
+      ) : null}
       <Card className="p-4" data-testid="run-detail-header">
         <div className="flex flex-wrap items-center gap-2">
           <StatusBadge status={run.status} testId={`badge-run-status-${run.id}`} />
@@ -124,6 +155,20 @@ export function RunDetailPage() {
         <Card className="p-3">Нормализовано: {Math.max(0, run.records - run.issues)}</Card>
         <Card className="p-3">Проблемы: {run.issues}</Card>
       </div>
+      {issuesBanner && run.status === "success" ? (
+        <Card className="border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/30" data-testid="run-issues-banner">
+          <p className="text-sm">{issuesBanner}</p>
+          {run.connectionId ? (
+            <LinkAsButton href={`/connections/${run.connectionId}/issues`} variant="outline" className="mt-2" data-testid="button-run-to-connection-issues">
+              Проблемы подключения
+            </LinkAsButton>
+          ) : (
+            <LinkAsButton href="/issues" variant="outline" className="mt-2" data-testid="button-run-to-issues">
+              Открыть проблемные записи
+            </LinkAsButton>
+          )}
+        </Card>
+      ) : null}
       {item.load_destination ? (
         <Card className="p-4" data-testid="run-load-destination">
           <p className="text-sm font-medium">Загрузка в приёмник</p>
@@ -134,8 +179,14 @@ export function RunDetailPage() {
       ) : null}
       {run.status === "failed" ? (
         <Card className="p-4" data-testid="run-error-detail">
-          <p className="font-medium">Синхронизация завершилась с ошибкой</p>
-          <p className="mt-1 text-sm text-muted-foreground">{item.error_message ?? "Подробности см. в логах Dagster / сообщении выше."}</p>
+          <p className="font-medium">{failExplain.title}</p>
+          <p className="mt-1 text-sm text-muted-foreground">{failExplain.description}</p>
+          <p className="mt-2 text-sm">{failExplain.recommendedAction}</p>
+        </Card>
+      ) : null}
+      {run.status === "cancelled" ? (
+        <Card className="p-4" data-testid="run-cancelled-detail">
+          <p className="text-sm">Синхронизация отменена пользователем. Часть потоков могла быть обработана до отмены.</p>
         </Card>
       ) : null}
       {run.status === "partial" ? (
@@ -167,7 +218,9 @@ export function RunDetailPage() {
                 {runIssues.map((issue) => (
                   <tr key={issue.id} className="border-t" data-testid={`row-run-issue-${issue.id}`}>
                     <td className="p-2 font-mono text-xs">{issue.field}</td>
-                    <td className="p-2">{issue.type}</td>
+                    <td className="p-2" title={issue.explanation}>
+                      {issue.title ?? issue.type}
+                    </td>
                     <td className="p-2 text-muted-foreground">{issue.original}</td>
                     <td className="p-2">{issue.stream}</td>
                   </tr>
@@ -178,7 +231,7 @@ export function RunDetailPage() {
         ) : (
           <p className="mt-2 text-sm text-muted-foreground">Нет проблем для отображения.</p>
         )}
-        <LinkAsButton href="/issues" variant="outline" className="mt-3" data-testid="button-run-to-issues">
+        <LinkAsButton href="/issues" variant="outline" className="mt-3" data-testid="button-run-to-issues-all">
           Все проблемные записи
         </LinkAsButton>
       </Card>

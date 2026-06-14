@@ -50,6 +50,7 @@ class AuthConfig(BaseModel):
     type: Literal["none", "bearer", "api_key_header"] = "none"
     header_name: str = "Authorization"
     env_var: str = ""
+    token: str = ""
     token_prefix: str = "Bearer "
 
 
@@ -92,12 +93,17 @@ def load_rest_connector_yaml(text: str) -> RestConnectorYaml:
     return RestConnectorYaml.model_validate(raw)
 
 
+def _auth_secret(cfg: AuthConfig) -> str:
+    secret = (cfg.token or "").strip()
+    if cfg.env_var:
+        secret = os.environ.get(cfg.env_var, "").strip() or secret
+    return secret
+
+
 def _auth_headers(cfg: AuthConfig) -> dict[str, str]:
     if cfg.type == "none":
         return {}
-    secret = ""
-    if cfg.env_var:
-        secret = os.environ.get(cfg.env_var, "").strip()
+    secret = _auth_secret(cfg)
     if cfg.type == "bearer":
         prefix = cfg.token_prefix or "Bearer "
         token = secret or os.environ.get("CONNECTOR_REST_BEARER", "").strip()
@@ -109,6 +115,217 @@ def _auth_headers(cfg: AuthConfig) -> dict[str, str]:
             return {}
         return {cfg.header_name: secret}
     return {}
+
+
+def _yaml_text_from_source(cfg: dict[str, Any] | None, yaml_text: str | None) -> str | None:
+    if yaml_text and str(yaml_text).strip():
+        return str(yaml_text).strip()
+    if not isinstance(cfg, dict):
+        return None
+    for key in ("yaml_body", "connector_builder_yaml"):
+        val = cfg.get(key)
+        if val and str(val).strip():
+            return str(val).strip()
+    return None
+
+
+def _structured_stream_from_dict(raw: dict[str, Any]) -> StreamSpec:
+    pag_raw = raw.get("pagination") if isinstance(raw.get("pagination"), dict) else {}
+    pag_type = str(raw.get("pagination_type") or pag_raw.get("type") or "none").strip().lower()
+    if pag_type not in ("none", "offset"):
+        pag_type = "none"
+    records_path = raw.get("records_json_path")
+    if records_path is not None and str(records_path).strip() == "":
+        records_path = None
+    body = raw.get("body")
+    return StreamSpec(
+        name=str(raw.get("name") or "").strip(),
+        path=str(raw.get("path") or "").strip(),
+        method=str(raw.get("method") or "GET").upper(),  # type: ignore[arg-type]
+        records_json_path=str(records_path).strip() if records_path else None,
+        body=body if isinstance(body, dict) else None,
+        pagination=PaginationConfig(
+            type=pag_type,  # type: ignore[arg-type]
+            limit_param=str(raw.get("limit_param") or pag_raw.get("limit_param") or "limit"),
+            offset_param=str(raw.get("offset_param") or pag_raw.get("offset_param") or "offset"),
+            limit=int(raw.get("limit") or pag_raw.get("limit") or 50),
+            max_pages=int(raw.get("max_pages") or pag_raw.get("max_pages") or 20),
+        ),
+    )
+
+
+def _structured_config_from_source(cfg: dict[str, Any]) -> RestConnectorYaml:
+    base_url = str(cfg.get("base_url") or "").strip()
+    if not base_url:
+        raise ValueError("rest_builder: укажите base_url или yaml_body")
+    streams_raw = cfg.get("streams")
+    if not isinstance(streams_raw, list) or not streams_raw:
+        raise ValueError("rest_builder: укажите непустой список streams или yaml_body")
+    streams: list[StreamSpec] = []
+    for item in streams_raw:
+        if not isinstance(item, dict):
+            continue
+        st = _structured_stream_from_dict(item)
+        if st.name and st.path:
+            streams.append(st)
+    if not streams:
+        raise ValueError("rest_builder: в streams нет валидных endpoint (name + path)")
+
+    auth_raw = cfg.get("auth") if isinstance(cfg.get("auth"), dict) else {}
+    auth_type = str(cfg.get("auth_type") or auth_raw.get("type") or "none").strip().lower()
+    if auth_type not in ("none", "bearer", "api_key_header"):
+        auth_type = "none"
+    auth_token = str(cfg.get("auth_token") or auth_raw.get("token") or "").strip()
+    auth_header = str(cfg.get("auth_header_name") or auth_raw.get("header_name") or "Authorization").strip()
+    token_prefix = str(cfg.get("token_prefix") or auth_raw.get("token_prefix") or "Bearer ").strip()
+
+    openapi_url = cfg.get("openapi_url") or auth_raw.get("openapi_url")
+    openapi_str = str(openapi_url).strip() if openapi_url else None
+    if openapi_str == "":
+        openapi_str = None
+
+    timeout_raw = cfg.get("timeout_seconds", 60.0)
+    try:
+        timeout_seconds = float(timeout_raw)
+    except (TypeError, ValueError):
+        timeout_seconds = 60.0
+
+    return RestConnectorYaml(
+        version=1,
+        base_url=base_url.rstrip("/"),
+        auth=AuthConfig(
+            type=auth_type,  # type: ignore[arg-type]
+            header_name=auth_header or "Authorization",
+            token=auth_token,
+            token_prefix=token_prefix or "Bearer ",
+            env_var=str(auth_raw.get("env_var") or "").strip(),
+        ),
+        timeout_seconds=timeout_seconds,
+        openapi_url=openapi_str,
+        streams=streams,
+    )
+
+
+def rest_builder_config_valid(cfg: dict[str, Any] | None, yaml_text: str | None = None) -> bool:
+    try:
+        rest_builder_config_from_source(cfg, yaml_text)
+        return True
+    except ValueError:
+        return False
+
+
+def rest_builder_config_from_source(
+    cfg: dict[str, Any] | None,
+    yaml_text: str | None = None,
+) -> RestConnectorYaml:
+    text = _yaml_text_from_source(cfg, yaml_text)
+    if text:
+        return load_rest_connector_yaml(text)
+    if not isinstance(cfg, dict):
+        raise ValueError("rest_builder: нужен config с yaml_body или structured fields (base_url + streams)")
+    return _structured_config_from_source(cfg)
+
+
+def rest_builder_config_to_yaml(cfg: RestConnectorYaml) -> str:
+    payload: dict[str, Any] = {
+        "version": cfg.version,
+        "base_url": cfg.base_url,
+        "auth": {
+            "type": cfg.auth.type,
+            "header_name": cfg.auth.header_name,
+            "token_prefix": cfg.auth.token_prefix,
+        },
+        "timeout_seconds": cfg.timeout_seconds,
+        "streams": [],
+    }
+    if cfg.auth.token:
+        payload["auth"]["token"] = cfg.auth.token
+    if cfg.auth.env_var:
+        payload["auth"]["env_var"] = cfg.auth.env_var
+    if cfg.openapi_url:
+        payload["openapi_url"] = cfg.openapi_url
+    for st in cfg.streams:
+        stream_payload: dict[str, Any] = {
+            "name": st.name,
+            "path": st.path,
+            "method": st.method,
+            "pagination": {
+                "type": st.pagination.type,
+                "limit_param": st.pagination.limit_param,
+                "offset_param": st.pagination.offset_param,
+                "limit": st.pagination.limit,
+                "max_pages": st.pagination.max_pages,
+            },
+        }
+        if st.records_json_path:
+            stream_payload["records_json_path"] = st.records_json_path
+        if st.body:
+            stream_payload["body"] = st.body
+        payload["streams"].append(stream_payload)
+    return yaml.safe_dump(payload, allow_unicode=True, sort_keys=False)
+
+
+def probe_rest_builder_stream(
+    cfg: RestConnectorYaml,
+    *,
+    stream_index: int = 0,
+    sample_limit: int = 5,
+) -> dict[str, Any]:
+    if not cfg.streams:
+        return {"ok": False, "status_code": None, "message": "Нет streams", "sample_records": [], "record_count": 0}
+    if stream_index < 0 or stream_index >= len(cfg.streams):
+        return {
+            "ok": False,
+            "status_code": None,
+            "message": f"stream_index {stream_index} вне диапазона",
+            "sample_records": [],
+            "record_count": 0,
+        }
+    st = cfg.streams[stream_index]
+    headers = _auth_headers(cfg.auth)
+    url = cfg.base_url.rstrip("/") + "/" + st.path.lstrip("/")
+    try:
+        with httpx.Client(timeout=cfg.timeout_seconds) as client:
+            if st.method == "GET":
+                params: dict[str, Any] = {}
+                if st.pagination.type == "offset":
+                    params[st.pagination.limit_param] = min(st.pagination.limit, 20)
+                    params[st.pagination.offset_param] = 0
+                resp = client.request(st.method, url, headers=headers, params=params or None)
+            else:
+                resp = client.request(st.method, url, headers=headers, json=st.body or {})
+        ok = resp.status_code < 500
+        records: list[dict[str, Any]] = []
+        schema_hint: dict[str, Any] = {}
+        if resp.status_code < 400:
+            try:
+                body = resp.json()
+                records = _extract_records(body, st.records_json_path)
+                schema_hint = records_to_json_schema(records[:sample_limit])
+            except Exception:
+                records = []
+        sample = records[:sample_limit]
+        return {
+            "ok": ok and resp.status_code < 400,
+            "status_code": resp.status_code,
+            "message": f"HTTP {resp.status_code} для stream «{st.name}»",
+            "sample_records": sample,
+            "record_count": len(records),
+            "schema_hint": schema_hint,
+            "stream": st.name,
+            "url": url,
+        }
+    except Exception as exc:
+        return {
+            "ok": False,
+            "status_code": None,
+            "message": str(exc),
+            "sample_records": [],
+            "record_count": 0,
+            "schema_hint": {},
+            "stream": st.name,
+            "url": url,
+        }
 
 
 def _resolve_ref(root: dict[str, Any], node: Any) -> Any:

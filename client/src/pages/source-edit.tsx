@@ -20,6 +20,13 @@ import {
   validateBitrix24Config,
   type Bitrix24Config,
 } from "@/components/bitrix24-source-form";
+import {
+  RestBuilderSourceForm,
+  parseRestBuilderConfig,
+  restBuilderConfigToRecord,
+  validateRestBuilderConfig,
+  type RestBuilderConfig,
+} from "@/components/rest-builder-source-form";
 import { ConfirmDeleteButton } from "@/components/confirm-delete-button";
 import { fetchEltSource, patchEltSource, deleteEltSource } from "@/lib/api-elt";
 import { fetchWorkspaces } from "@/lib/api-datanorma";
@@ -37,6 +44,7 @@ export function SourceEditPage() {
   const [configText, setConfigText] = useState("{}");
   const [googleSheetsConfig, setGoogleSheetsConfig] = useState<GoogleSheetsConfig | null>(null);
   const [bitrix24Config, setBitrix24Config] = useState<Bitrix24Config | null>(null);
+  const [restBuilderConfig, setRestBuilderConfig] = useState<RestBuilderConfig | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
 
@@ -66,10 +74,16 @@ export function SourceEditPage() {
     } else if (s.connector_code === "bitrix24") {
       setBitrix24Config(parseBitrix24Config(s.config ?? {}));
       setGoogleSheetsConfig(null);
+      setRestBuilderConfig(null);
+    } else if (s.connector_code === "rest_builder") {
+      setRestBuilderConfig(parseRestBuilderConfig(s.config ?? {}));
+      setGoogleSheetsConfig(null);
+      setBitrix24Config(null);
     } else {
       setConfigText(JSON.stringify(s.config ?? {}, null, 2));
       setGoogleSheetsConfig(null);
       setBitrix24Config(null);
+      setRestBuilderConfig(null);
     }
   }, [query.data]);
 
@@ -82,8 +96,11 @@ export function SourceEditPage() {
     if (connectorCode === "bitrix24" && bitrix24Config) {
       return bitrix24ConfigToRecord(bitrix24Config);
     }
+    if (connectorCode === "rest_builder" && restBuilderConfig) {
+      return restBuilderConfigToRecord(restBuilderConfig);
+    }
     return JSON.parse(configText || "{}") as Record<string, unknown>;
-  }, [connectorCode, googleSheetsConfig, bitrix24Config, configText]);
+  }, [connectorCode, googleSheetsConfig, bitrix24Config, restBuilderConfig, configText]);
 
   const configValidationError = useMemo(() => {
     if (connectorCode === "google_sheet" && googleSheetsConfig) {
@@ -92,13 +109,16 @@ export function SourceEditPage() {
     if (connectorCode === "bitrix24" && bitrix24Config) {
       return validateBitrix24Config(bitrix24Config);
     }
+    if (connectorCode === "rest_builder" && restBuilderConfig) {
+      return validateRestBuilderConfig(restBuilderConfig);
+    }
     try {
       JSON.parse(configText || "{}");
       return null;
     } catch {
       return "Некорректный JSON в конфигурации";
     }
-  }, [connectorCode, googleSheetsConfig, bitrix24Config, configText]);
+  }, [connectorCode, googleSheetsConfig, bitrix24Config, restBuilderConfig, configText]);
 
   const saveMut = useMutation({
     mutationFn: () => {
@@ -165,7 +185,7 @@ export function SourceEditPage() {
           />
         }
       />
-      <div className="mb-4 max-w-xl space-y-3" data-testid="form-source-edit">
+      <div className="mb-4 max-w-3xl space-y-3" data-testid="form-source-edit">
         <Input
           placeholder="Название источника"
           value={name}
@@ -180,6 +200,8 @@ export function SourceEditPage() {
           />
         ) : connectorCode === "bitrix24" && bitrix24Config ? (
           <Bitrix24SourceForm value={bitrix24Config} onChange={setBitrix24Config} idPrefix="source-edit-bx24" />
+        ) : connectorCode === "rest_builder" && restBuilderConfig ? (
+          <RestBuilderSourceForm value={restBuilderConfig} onChange={setRestBuilderConfig} idPrefix="source-edit-rb" />
         ) : (
           <>
             <label className="text-sm text-muted-foreground" htmlFor="source-edit-config-json">

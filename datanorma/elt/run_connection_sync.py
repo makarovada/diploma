@@ -31,6 +31,7 @@ from datanorma.web.elt_repo import (
     public_destination_payload,
     public_source_payload,
 )
+from datanorma.web.sync_runs import SyncCancelled, is_sync_run_cancel_requested
 
 _log = logging.getLogger(__name__)
 
@@ -104,8 +105,9 @@ def run_connection_sync(
     workspace_id: int,
     domain_connection_id: int,
     sync_run_id: int | None = None,
+    only_stream_name: str | None = None,
 ) -> dict[str, Any]:
-    """Выполняет синхронизацию всех включённых потоков connection. Возвращает summary dict."""
+    """Выполняет синхронизацию включённых потоков connection. Возвращает summary dict."""
     crow = get_connection(conn, workspace_id=workspace_id, connection_id=domain_connection_id)
     if crow is None:
         raise ValueError("connection not found")
@@ -132,6 +134,11 @@ def run_connection_sync(
     )
 
     streams = [s for s in (crow.get("streams") or []) if s.get("is_enabled")]
+    if only_stream_name:
+        sn_filter = only_stream_name.strip()
+        streams = [s for s in streams if str(s["stream_name"]).strip() == sn_filter]
+        if not streams:
+            raise ValueError(f"Поток '{sn_filter}' не найден или отключён.")
     if not streams:
         raise ValueError("Нет включённых потоков в connection.")
 
@@ -140,6 +147,16 @@ def run_connection_sync(
     total_issues = 0
 
     for cs in streams:
+        if sync_run_id is not None and is_sync_run_cancel_requested(conn, sync_run_id):
+            partial = {
+                "streams": per_stream,
+                "total_rows_written": total_rows,
+                "total_issues": total_issues,
+                "source_connector": cc_src,
+                "destination_connector": cc_dst,
+                "cancelled": True,
+            }
+            raise SyncCancelled(partial)
         csid = int(cs["id"])
         sn = str(cs["stream_name"]).strip()
         sync_mode = str(cs.get("sync_mode") or "full_refresh").strip()

@@ -38,6 +38,14 @@ class SyncRunError(RuntimeError):
     """Ошибка запуска/опроса sync run."""
 
 
+class SyncCancelled(Exception):
+    """Inline-синк прерван по запросу отмены (частичный summary в .summary)."""
+
+    def __init__(self, summary: dict[str, Any]):
+        self.summary = summary
+        super().__init__("sync cancelled")
+
+
 @dataclass(frozen=True)
 class DagsterLaunchResult:
     run_id: str
@@ -471,3 +479,84 @@ def refresh_sync_run_status(conn: Connection, run: dict[str, Any]) -> dict[str, 
 def refresh_recent_sync_runs(conn: Connection, limit: int = 50, workspace_id: int | None = None) -> list[dict[str, Any]]:
     runs = list_sync_runs(conn, limit=limit, workspace_id=workspace_id)
     return [refresh_sync_run_status(conn, r) for r in runs]
+
+
+def is_sync_run_cancel_requested(conn: Connection, run_id: int) -> bool:
+    row = conn.execute(
+        text("SELECT meta FROM sync_run WHERE id = :id"),
+        {"id": run_id},
+    ).mappings().first()
+    if row is None:
+        return False
+    meta = _parse_sync_run_meta(row.get("meta"))
+    return bool(meta.get("cancel_requested"))
+
+
+def terminate_dagster_run(dagster_run_id: str) -> None:
+    mutation = """
+    mutation TerminateRun($runId: String!) {
+      terminatePipelineExecution(runId: $runId) {
+        __typename
+        ... on TerminateRunSuccess {
+          run { runId status }
+        }
+        ... on TerminateRunFailure {
+          message
+        }
+        ... on RunNotFoundError {
+          runId
+        }
+      }
+    }
+    """
+    result = _run_graphql(mutation, {"runId": dagster_run_id}).get("terminatePipelineExecution") or {}
+    kind = result.get("__typename")
+    if kind == "TerminateRunFailure":
+        raise SyncRunError(str(result.get("message") or "Dagster terminate failed"))
+    if kind == "RunNotFoundError":
+        raise SyncRunError(f"Dagster run not found: {dagster_run_id}")
+
+
+def request_sync_run_cancel(conn: Connection, run_id: int) -> dict[str, Any]:
+    row = conn.execute(
+        text(f"SELECT id, status, dagster_run_id FROM sync_run WHERE id = :id"),
+        {"id": run_id},
+    ).mappings().first()
+    if row is None:
+        raise SyncRunError("sync run not found")
+    status = str(row["status"]).lower()
+    if status not in RUNNING_STATUSES:
+        raise SyncRunError("sync run is not running")
+    drid = row.get("dagster_run_id")
+    if drid and str(drid) not in ("", "elt_inline"):
+        terminate_dagster_run(str(drid))
+    mp = json.dumps({"cancel_requested": True}, ensure_ascii=False)
+    updated = conn.execute(
+        text(
+            "UPDATE sync_run SET meta = COALESCE(meta, '{}'::jsonb) || CAST(:mp AS jsonb), "
+            "updated_at = clock_timestamp() WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
+        ),
+        {"id": run_id, "mp": mp},
+    ).mappings().one()
+    return public_sync_run_row(dict(updated))
+
+
+def mark_sync_run_cancelled(
+    conn: Connection,
+    run_id: int,
+    *,
+    meta_patch: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    mp = json.dumps(meta_patch or {}, ensure_ascii=False)
+    row = conn.execute(
+        text(
+            "UPDATE sync_run SET status = 'cancelled', finished_at = COALESCE(finished_at, clock_timestamp()), "
+            "updated_at = clock_timestamp(), "
+            "meta = COALESCE(meta, '{}'::jsonb) || CAST(:mp AS jsonb) "
+            "WHERE id = :id "
+            f"RETURNING {_SYNC_RUN_COLS}"
+        ),
+        {"id": run_id, "mp": mp},
+    ).mappings().one()
+    return public_sync_run_row(dict(row))

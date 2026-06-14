@@ -48,20 +48,6 @@ def test_create_yandex_metrika_source_discover(tmp_path: Path) -> None:
     assert {s.name for s in cat.streams} == {"summary", "visits", "hits", "goals_reaches"}
 
 
-def test_create_ozon_source_discover(tmp_path: Path) -> None:
-    samples = tmp_path / "data" / "samples"
-    samples.mkdir(parents=True)
-    (samples / "ozon_postings.json").write_text(
-        '{"result":{"postings":[{"posting_number":"p1","id":1}]}}',
-        encoding="utf-8",
-    )
-    paths = DataPathsResource(repo_root=str(tmp_path))
-    src = create_source("ozon", paths=paths)
-    cat = src.discover()
-    assert len(cat.streams) == 1
-    assert cat.streams[0].name == "postings"
-    assert cat.streams[0].json_schema.get("type") == "object"
-
 
 def test_rest_builder_load_yaml() -> None:
     yml = """

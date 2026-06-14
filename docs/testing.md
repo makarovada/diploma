@@ -166,7 +166,8 @@ $env:LOAD_TEST_DURATION = "3m"
 3. Создать destination (`postgres` с `url`, `schema`, `table`).
 4. Пройти мастер connection: discover → колонки и типы → сохранить.
 5. Запустить sync (`Запустить`) и проверить `/runs` (логи, статус).
-6. При ошибках нормализации — `/issues`.
+6. При ошибках нормализации — `/issues` (объяснение, ignore/resolve, отключение потока).
+7. На `/connections/:id/streams` — отключить поток, синхронизировать один поток, отменить running-запуск.
 
 ## Smoke: Яндекс Метрика → PostgreSQL + cron
 

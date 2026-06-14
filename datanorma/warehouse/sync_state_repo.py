@@ -9,6 +9,8 @@ from typing import Any
 from sqlalchemy import inspect, text
 from sqlalchemy.engine import Engine, RowMapping
 
+from datanorma.ingest.dagster_streams import dagster_staging_table_names
+
 _log = logging.getLogger(__name__)
 
 
@@ -34,11 +36,14 @@ def ensure_phase1_schema(engine: Engine) -> None:
             "Проверьте, что переменная DATABASE_URL в окружении Dagster совпадает с той, "
             "куда вы накатывали Alembic (например порт Docker 5433, а не локальный 5432)."
         )
-    if "raw_ozon_postings_staging" not in tables:
-        raise Phase1SchemaRequiredError(
-            "Нет таблицы raw_ozon_postings_staging. Примените: alembic upgrade head "
-            "(миграция переименовывает raw_*_staging и добавляет _ingest_* колонки)."
-        )
+    if "raw_google_sheet_orders_staging" not in tables:
+        known = dagster_staging_table_names()
+        if not any(name in tables for name in known):
+            raise Phase1SchemaRequiredError(
+                "Нет таблиц raw_*_staging. Примените: alembic upgrade head "
+                "(миграция добавляет raw_*_staging и _ingest_* колонки) "
+                "или запустите Dagster staging asset (создаёт недостающие таблицы)."
+            )
 
 
 def extract_stream_cursor(row: RowMapping | dict[str, Any] | None) -> str | None:

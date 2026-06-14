@@ -3,20 +3,18 @@ import { ConnectionSubNav } from "@/components/connection-sub-nav";
 import { PageHeader } from "@/components/page-header";
 import { useConnectionFromPath } from "@/hooks/use-connection-from-path";
 import { LinkAsButton } from "@/components/link-as-button";
-import { fetchNormalizationIssues, mapNormRowToIssue } from "@/lib/api-datanorma";
+import { fetchNormalizationIssues, filterIssuesByConnectionId, mapNormRowToIssue } from "@/lib/api-datanorma";
 import { queryKeys } from "@/lib/query-keys";
 
 export function ConnectionIssuesPage() {
   const { connection, id, isLoading, isError } = useConnectionFromPath();
   const issuesQuery = useQuery({
-    queryKey: queryKeys.connectionIssues.bySource(connection?.source),
+    queryKey: queryKeys.connectionIssues.byConnection(id),
     queryFn: async () => {
       const { rows } = await fetchNormalizationIssues(200);
-      return rows
-        .filter((r) => (r.source_system ?? "") === connection!.source)
-        .map(mapNormRowToIssue);
+      return filterIssuesByConnectionId(rows, Number(id)).map(mapNormRowToIssue);
     },
-    enabled: Boolean(connection?.source),
+    enabled: /^\d+$/.test(id),
   });
 
   if (isLoading) return <div className="p-4 text-muted-foreground">Загрузка…</div>;
@@ -38,7 +36,7 @@ export function ConnectionIssuesPage() {
         <table className="w-full min-w-[720px] text-sm" aria-label="Проблемы подключения">
           <thead className="bg-muted">
             <tr>
-              <th>Тип</th>
+              <th>Тип проблемы</th>
               <th>Поток</th>
               <th>Поле</th>
               <th>Исходное</th>
@@ -56,7 +54,7 @@ export function ConnectionIssuesPage() {
             ) : (
               rows.map((issue) => (
                 <tr key={issue.id} className="border-t">
-                  <td>{issue.type}</td>
+                  <td title={issue.explanation}>{issue.title ?? issue.type}</td>
                   <td>{issue.stream}</td>
                   <td>{issue.field}</td>
                   <td>{issue.original}</td>
