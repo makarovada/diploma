@@ -6,7 +6,7 @@ DataNorma - дипломная платформа интеграции и нор
 ## Что важно сейчас
 
 - Интерфейс: React SPA под `/ui/` (сборка из `client/`).
-- Продуктовый контур: **connection sync** — `source.read → cast_row(StreamRules) → destination.write`.
+- Продуктовый контур: **connection sync** — `source.read → cast_row(StreamRules) → destination.write` (режим записи: `destination_sync_mode`).
 - Нормализация per-stream: `ColumnRule` / `StreamRules` в мастере подключения.
 - Источники в каталоге: `google_sheet`, `bitrix24`, `moysklad`, `amocrm`, `yandex_metrika`, `rest_builder`.
 - Приёмники: `postgres`, `clickhouse`, `csv`, `xlsx`.

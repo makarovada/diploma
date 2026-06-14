@@ -30,6 +30,7 @@
 |-------|------|
 | GET | `/api/v1/connectors/catalog` |
 | GET | `/api/v1/connectors/catalog/{code}` |
+| POST | `/api/v1/connectors/rest-builder/probe` |
 | GET | `/api/v1/dictionaries` |
 | GET | `/api/v1/dictionaries/{code}` |
 
@@ -64,6 +65,8 @@
 | POST | `/api/v1/connections/preview-rules` |
 | PUT | `/api/v1/connections/{id}/streams/{stream}/rules` |
 
+`PATCH /connections/{id}` принимает `streams[]` с полями `sync_mode`, `destination_sync_mode`, `cursor_field`, `primary_key`, `is_enabled`. `POST .../trigger` выполняет **inline** sync в процессе FastAPI; опционально `body.stream_name` — только один поток.
+
 ## Sync runs
 
 | Метод | Путь |
@@ -75,6 +78,7 @@
 | GET | `/api/v1/syncs/{id}/status` |
 | GET | `/api/v1/syncs/{id}/logs` |
 | GET | `/api/v1/syncs/{id}/issues` |
+| POST | `/api/v1/syncs/{id}/cancel` |
 | POST | `/api/v1/syncs/{id}/retry` |
 
 ## Issues, очередь, расписания

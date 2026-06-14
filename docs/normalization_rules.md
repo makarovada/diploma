@@ -18,11 +18,13 @@
 | Поле | Назначение |
 |------|------------|
 | `stream_name` | Имя потока из `discover` |
-| `primary_key` | Ключи дедупликации |
-| `cursor_field` | Поле для incremental |
-| `sync_mode` | `full_refresh` / `incremental` |
+| `primary_key` | Ключи дедупликации (обязателен при `destination_sync_mode=append_dedup`) |
+| `cursor_field` | Поле для incremental (обязателен при инкрементальных пресетах) |
+| `sync_mode` | `full_refresh` / `incremental` — режим чтения источника |
 | `drop_unknown_columns` | Удалять колонки без правила |
-| `deduplicate` | Дедупликация по `primary_key` |
+| `deduplicate` | Дедупликация по `primary_key` в `cast_row` |
+
+Режим записи в приёмник задаётся отдельно в `connection_stream.destination_sync_mode` (см. [`architecture.md`](architecture.md)); `sync_mode` в stream rules дублирует режим чтения для `cast_row`.
 
 ### ColumnRule (на колонку)
 
@@ -62,9 +64,9 @@
 
 | Слой | Ответственность |
 |------|-----------------|
-| extract (`source.read`) | Чтение без изменения смысла |
+| extract (`source.read`) | Чтение без изменения смысла; режим из `sync_mode` |
 | normalize (`cast_row`) | Структурная чистка и типы |
-| load (`destination.write`) | Запись в приёмник |
+| load (`destination.write`) | Запись в приёмник; режим из `destination_sync_mode` |
 | `semantic.*` (dbt) | Бизнес-правила и аналитика |
 
 ## Связанные документы

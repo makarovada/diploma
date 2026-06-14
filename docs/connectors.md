@@ -5,10 +5,10 @@
 Каждый source connector реализует:
 
 - `check` — проверка доступности источника и конфигурации;
-- `discover` — описание доступных stream и их JSON-схемы;
+- `discover` — описание доступных stream и их JSON-схемы (возвращает `IngestCatalog`);
 - `read` — чтение данных потока (`full_refresh` или `incremental`).
 
-Реализации: `datanorma/sources/`. Регистрация: `datanorma/sources/registry.py`. Каталог в UI и API: `GET /api/v1/connectors/catalog`.
+Реализации: `datanorma/sources/`. Регистрация: `datanorma/sources/registry.py` (`SOURCE_KINDS`). Каталог в UI и API: `GET /api/v1/connectors/catalog`. Метаданные мастера (layout, дефолты sync): `datanorma/web/connector_schema_meta.py`.
 
 ## Источники в продуктовом каталоге
 
@@ -16,14 +16,14 @@
 
 | Код | Система | Layout в мастере | Потоки (примеры) |
 |-----|---------|------------------|------------------|
-| `google_sheet` | Google Sheets | **flat** | одна таблица |
-| `bitrix24` | Bitrix24 CRM | **entities** | сделки, контакты, лиды |
-| `moysklad` | МойСклад | **entities** | заказы, товары, остатки |
-| `amocrm` | amoCRM | **entities** | сделки, контакты, компании |
-| `yandex_metrika` | Яндекс Метрика | **entities** | summary, visits, hits, goals_reaches |
-| `rest_builder` | REST API Builder | **flat** | потоки из формы или YAML |
+| `google_sheet` | Google Sheets | **flat** | `orders` |
+| `bitrix24` | Bitrix24 CRM | **entities** | `crm_deals`, `crm_contacts`, `crm_leads`, `crm_companies`, `crm_tasks`, `crm_activities` |
+| `moysklad` | МойСклад | **entities** | `demand`, `customerorder`, `product`, `counterparty`, `invoiceout`, `stock` |
+| `amocrm` | amoCRM | **entities** | `leads`, `contacts`, `companies`, `tasks`, `pipelines` |
+| `yandex_metrika` | Яндекс Метрика | **entities** | `summary`, `visits`, `hits`, `goals_reaches` |
+| `rest_builder` | REST API Builder | **flat** / **entities** | потоки из формы или YAML; при одном потоке — layout `flat` |
 
-Фикстуры для офлайн-режима: `data/samples/` и `data/fixtures/<connector>/`.
+Фикстуры для офлайн-режима: `data/samples/` и `data/fixtures/<connector>/` (например `data/fixtures/bitrix24/deals_page1.json`).
 
 ### REST API Builder (`rest_builder`)
 
@@ -62,7 +62,7 @@
 | `csv` | выгрузка в CSV-файл |
 | `xlsx` | выгрузка в Excel |
 
-Реализации: `datanorma/destinations/`. Контракт: `check(config)` и `write(stream, records, schema, mode, config)`.
+Реализации: `datanorma/destinations/`. Контракт: `check(config)` и `write(stream, records, schema, mode, config)`. Режим `mode` (`append`, `full_refresh`, `upsert`, `replace_table`) вычисляется из `destination_sync_mode` connection stream.
 
 ## Поток данных
 
@@ -73,6 +73,19 @@ source.read(stream) → cast_row(StreamRules) → destination.write → sync_sta
 ```
 
 Коннектор **не формирует бизнес-витрины**. Структурная нормализация — per-stream правила (`ColumnRule` / `StreamRules`); бизнес-смысл — в dbt-моделях слоя `semantic.*` (опционально, после загрузки в warehouse).
+
+## Режимы репликации
+
+На уровне `connection_stream` задаётся пара `sync_mode` + `destination_sync_mode`:
+
+| Пресет | `sync_mode` | `destination_sync_mode` |
+|--------|-------------|-------------------------|
+| Полная выгрузка — перезапись | `full_refresh` | `refresh_overwrite` |
+| Полная выгрузка — добавление | `full_refresh` | `refresh_append` |
+| Инкремент — добавление | `incremental` | `append` |
+| Инкремент — дедупликация | `incremental` | `append_dedup` |
+
+Дефолты per stream — в `connector_schema_meta.py`; настройка в мастере подключения и на `/connections/:id/streams`.
 
 ## Добавление коннектора
 

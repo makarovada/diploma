@@ -15,7 +15,7 @@
 
 1. **Источники** (`/sources`) — создать source, выполнить `check` и `discover`.
 2. **Приёмники** (`/destinations`) — настроить `postgres` / `clickhouse` / файл.
-3. **Подключения** (`/connections`) — мастер: выбор source/destination → колонки и типы → расписание.
+3. **Подключения** (`/connections`) — мастер: выбор source/destination → режим репликации → колонки и типы → расписание.
 4. **Запуски** (`/runs`) — история sync, логи, retry.
 5. **Проблемные записи** (`/issues`) — ошибки `cast_row`, resolve/ignore.
 6. **Расписания** (`/schedules`), **Очередь** (`/queue`) — мониторинг cron-синков.

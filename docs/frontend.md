@@ -15,7 +15,7 @@
 | Обзор | `/`, `/activity` |
 | Интеграции | `/connections/*`, `/sources/*`, `/destinations/*`, `/connectors/*` |
 | Синхронизация | `/runs/*`, `/schedules`, `/queue` |
-| Данные | `/issues/*` |
+| Данные | `/issues/*`, `/connections/:id/streams` |
 | Администрирование | `/users`, `/workspaces/*`, `/dictionaries`, `/audit` |
 | Auth | `/login`, `/forbidden` |
 
@@ -23,15 +23,19 @@
 
 ## Мастер подключения
 
-Шаг **«Колонки и типы»** (`connection-wizard`):
+Шаги `connection-wizard`:
 
-1. `POST /api/v1/sources/{id}/discover` → `layout` (`flat` / `entities`), `entity_labels`.
-2. Маппинг полей с типами нормализации (`phone`, `email`, `inn`, `datetime`, …).
-3. `POST /api/v1/connections` с `column_rules` и `wizard_meta`.
+1. `POST /api/v1/sources/{id}/discover` → `layout` (`flat` / `entities`), `entity_labels`, `stream_defaults`.
+2. **Режим передачи данных** — пресеты репликации (`StreamReplicationModeEditor`): `sync_mode` + `destination_sync_mode`, `cursor_field`, `primary_key`.
+3. **Колонки и типы** — маппинг полей с типами нормализации (`phone`, `email`, `inn`, `datetime`, …).
+4. `POST /api/v1/connections` с `streams`, `column_rules` и `wizard_meta`.
 
-Страница правил колонок: `GET /api/v1/connections/{id}` → `column_rules`.
+Страницы после создания:
 
-- **flat**-источники (Google Sheets, REST Builder): одна таблица полей.
+- правила колонок: `GET /api/v1/connections/{id}` → `column_rules`;
+- управление потоками: `/connections/:id/streams` — включение/отключение, режим репликации, синк одного потока, отмена запуска.
+
+- **flat**-источники (Google Sheets, REST Builder с одним потоком): одна таблица полей.
 - **entities**-источники (Bitrix24, amoCRM, МойСклад, Яндекс Метрика): чекбоксы сущностей + колонка «Сущность».
 
 ## Цвета и дальтонизм

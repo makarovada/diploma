@@ -29,6 +29,7 @@
 ## Стандарт документации
 
 - русский язык;
-- терминология: `source`, `destination`, `connection`, `sync`, `stream`, `StreamRules`, `ColumnRule`, workspace, RBAC;
+- терминология: `source`, `destination`, `connection`, `sync`, `stream`, `StreamRules`, `ColumnRule`, `destination_sync_mode`, workspace, RBAC;
 - продуктовый контур: connection sync (`source.read → cast_row → destination.write`);
-- бизнес-витрины — dbt `semantic.*`, не жёсткие ORM-модели в backend.
+- бизнес-витрины — dbt `semantic.*`, не жёсткие ORM-модели в backend;
+- актуальная миграция метаданных: `018_sync_state_cascade_on_stream_delete`.
